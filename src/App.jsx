@@ -947,7 +947,15 @@ Maximum 5 lignes.`
       const data = await res.json().catch(() => ({}))
 
       if (!res.ok) {
-        throw new Error(data?.error || `Proxy HTTP ${res.status}`)
+        const parts = [
+          data?.error,
+          data?.detail,
+          data?.anthropicStatus != null ? `Anthropic HTTP ${data.anthropicStatus}` : null,
+          data?.phase ? `Phase: ${data.phase}` : null,
+        ].filter(Boolean)
+        throw new Error(
+          parts.length > 0 ? parts.join('\n\n') : `Proxy HTTP ${res.status}`,
+        )
       }
 
       setAiText(typeof data?.text === 'string' ? data.text : 'Aucune reponse IA.')
