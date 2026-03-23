@@ -23,46 +23,13 @@ const MTF_TIMEFRAMES = [
 ]
 
 const TIMEFRAMES = [
-  {
-    id: '15m',
-    label: '15m',
-    binanceInterval: '15m',
-    twelveInterval: '15min',
-    tradingViewInterval: '15',
-    context: 'Scalping / Day trading',
-  },
-  {
-    id: '1H',
-    label: '1H',
-    binanceInterval: '1h',
-    twelveInterval: '1h',
-    tradingViewInterval: '60',
-    context: 'Day trading',
-  },
-  {
-    id: '4H',
-    label: '4H',
-    binanceInterval: '4h',
-    twelveInterval: '4h',
-    tradingViewInterval: '240',
-    context: 'Swing trading',
-  },
-  {
-    id: '1D',
-    label: '1D',
-    binanceInterval: '1d',
-    twelveInterval: '1day',
-    tradingViewInterval: 'D',
-    context: 'Position trading',
-  },
-  {
-    id: '1W',
-    label: '1W',
-    binanceInterval: '1w',
-    twelveInterval: '1week',
-    tradingViewInterval: 'W',
-    context: 'Trading long terme',
-  },
+  { id: '1m', label: '1m', binanceInterval: '1m', twelveInterval: '1min', tradingViewInterval: '1', context: 'Scalping' },
+  { id: '5m', label: '5m', binanceInterval: '5m', twelveInterval: '5min', tradingViewInterval: '5', context: 'Scalping' },
+  { id: '15m', label: '15m', binanceInterval: '15m', twelveInterval: '15min', tradingViewInterval: '15', context: 'Scalping / Day trading' },
+  { id: '1H', label: '1H', binanceInterval: '1h', twelveInterval: '1h', tradingViewInterval: '60', context: 'Day trading' },
+  { id: '4H', label: '4H', binanceInterval: '4h', twelveInterval: '4h', tradingViewInterval: '240', context: 'Swing trading' },
+  { id: '1D', label: '1D', binanceInterval: '1d', twelveInterval: '1day', tradingViewInterval: 'D', context: 'Position trading' },
+  { id: '1W', label: '1W', binanceInterval: '1w', twelveInterval: '1week', tradingViewInterval: 'W', context: 'Trading long terme' },
 ]
 
 const WATCHLIST = [
@@ -359,35 +326,95 @@ function ema(values, period) {
 }
 
 function computeRSI(closes, period = 14) {
-  if (closes.length < period + 1) return null
+  const series = computeRSISeries(closes, period)
+  return series && series.length > 0 ? series[series.length - 1] : null
+}
+
+/** Série RSI complète pour Stoch RSI. */
+function computeRSISeries(closes, period = 14) {
+  if (closes.length < period + 1) return []
+  const out = []
   let gainSum = 0
   let lossSum = 0
-
   for (let i = 1; i <= period; i++) {
     const diff = closes[i] - closes[i - 1]
     if (diff >= 0) gainSum += diff
     else lossSum += Math.abs(diff)
   }
-
   let avgGain = gainSum / period
   let avgLoss = lossSum / period
-
-  let rsi = null
   for (let i = period + 1; i < closes.length; i++) {
     const diff = closes[i] - closes[i - 1]
     const gain = diff > 0 ? diff : 0
     const loss = diff < 0 ? Math.abs(diff) : 0
     avgGain = (avgGain * (period - 1) + gain) / period
     avgLoss = (avgLoss * (period - 1) + loss) / period
-
+    let rsi
     if (avgLoss === 0) rsi = 100
     else {
       const rs = avgGain / avgLoss
       rsi = 100 - 100 / (1 + rs)
     }
+    out.push(rsi)
   }
+  return out
+}
 
-  return rsi
+/** Stoch RSI (14,3,3) : RSI period 14, %K 3, %D 3, lookback 14 pour min/max. */
+function computeStochRSI(closes, rsiPeriod = 14, kPeriod = 3, dPeriod = 3) {
+  const rsiSeries = computeRSISeries(closes, rsiPeriod)
+  if (rsiSeries.length < rsiPeriod) return null
+  const lookback = rsiPeriod
+  const rawStoch = []
+  for (let i = lookback - 1; i < rsiSeries.length; i++) {
+    const slice = rsiSeries.slice(i - lookback + 1, i + 1)
+    const minR = Math.min(...slice)
+    const maxR = Math.max(...slice)
+    const v = maxR - minR === 0 ? 50 : ((rsiSeries[i] - minR) / (maxR - minR)) * 100
+    rawStoch.push(v)
+  }
+  if (rawStoch.length < kPeriod) return null
+  const stochK = ema(rawStoch, kPeriod)
+  const stochD = ema(stochK.filter((x) => x != null), dPeriod)
+  const k = stochK[stochK.length - 1]
+  const d = stochD[stochD.length - 1]
+  return k != null && d != null ? { k, d } : null
+}
+
+/** Williams %R (14). Retourne valeur entre -100 et 0. */
+function computeWilliamsR(candles, period = 14) {
+  if (candles.length < period) return null
+  const slice = candles.slice(-period)
+  const hh = Math.max(...slice.map((c) => c.high))
+  const ll = Math.min(...slice.map((c) => c.low))
+  const close = candles[candles.length - 1].close
+  if (hh === ll) return -50
+  return -100 * ((hh - close) / (hh - ll))
+}
+
+/** Ichimoku (9,26,52). Retourne { aboveCloud } pour la dernière barre. */
+function computeIchimokuCloud(candles, tenkan = 9, kijun = 26, senkou = 52) {
+  const n = candles.length
+  if (n < Math.max(senkou, kijun) + 26) return null
+  const highs = candles.map((c) => c.high)
+  const lows = candles.map((c) => c.low)
+  const closes = candles.map((c) => c.close)
+
+  const t = (i) => (i < tenkan - 1 ? null : (Math.max(...highs.slice(i - tenkan + 1, i + 1)) + Math.min(...lows.slice(i - tenkan + 1, i + 1))) / 2)
+  const k = (i) => (i < kijun - 1 ? null : (Math.max(...highs.slice(i - kijun + 1, i + 1)) + Math.min(...lows.slice(i - kijun + 1, i + 1))) / 2)
+  const sa = (i) => (t(i) != null && k(i) != null ? (t(i) + k(i)) / 2 : null)
+  const sb = (i) => (i < senkou - 1 ? null : (Math.max(...highs.slice(i - senkou + 1, i + 1)) + Math.min(...lows.slice(i - senkou + 1, i + 1))) / 2)
+
+  const lastBar = n - 1
+  const srcBar = lastBar - 26
+  if (srcBar < 0) return null
+  const saVal = sa(srcBar)
+  const sbVal = sb(srcBar)
+  if (saVal == null || sbVal == null) return null
+  const cloudTop = Math.max(saVal, sbVal)
+  const cloudBottom = Math.min(saVal, sbVal)
+  const price = closes[lastBar]
+  return { aboveCloud: price > cloudTop, cloudTop, cloudBottom }
 }
 
 function computeMACD(closes, fast = 12, slow = 26, signalPeriod = 9) {
@@ -577,6 +604,10 @@ function buildConfluenceResult(mtfMap) {
   const macdShort = Number.isFinite(macdHist) ? macdHist < 0 : false
   const emaShort = price < m15.indicators.ema20 && price < m15.indicators.ema50
   const rrOk = m15.trade.rr > 2
+  const ichimokuAbove = m15.indicators.ichimoku?.aboveCloud ?? false
+  const stochK = m15.indicators.stochRsi?.k ?? 50
+  const stochRsiFavLong = stochK < 20
+  const stochRsiFavShort = stochK > 80
 
   const longChecks = [
     score1dOkLong,
@@ -586,6 +617,8 @@ function buildConfluenceResult(mtfMap) {
     macdLong,
     emaLong,
     rrOk,
+    ichimokuAbove,
+    stochRsiFavLong,
   ]
 
   const shortChecks = [
@@ -596,6 +629,8 @@ function buildConfluenceResult(mtfMap) {
     macdShort,
     emaShort,
     rrOk,
+    !ichimokuAbove,
+    stochRsiFavShort,
   ]
 
   const longCount = longChecks.filter(Boolean).length
@@ -608,14 +643,14 @@ function buildConfluenceResult(mtfMap) {
   let checksPassed = longCount
   let checksDirection = 'LONG'
 
-  if (longCount >= 5 && longCount >= shortCount) {
+  if (longCount >= 6 && longCount >= shortCount) {
     recommendation = 'LONG'
     signalBadge = 'LONG IDÉAL'
     signalTone = 'good'
     checks = longChecks
     checksPassed = longCount
     checksDirection = 'LONG'
-  } else if (shortCount >= 5 && shortCount > longCount) {
+  } else if (shortCount >= 6 && shortCount > longCount) {
     recommendation = 'SHORT'
     signalBadge = 'SHORT IDÉAL'
     signalTone = 'bad'
@@ -634,6 +669,8 @@ function buildConfluenceResult(mtfMap) {
           'MACD positif',
           'Prix > EMA20 et EMA50',
           'R/R > 2.0',
+          'Prix > nuage Ichimoku',
+          'Stoch RSI zone favorable',
         ]
       : [
           'Score 1D < 40',
@@ -643,6 +680,8 @@ function buildConfluenceResult(mtfMap) {
           'MACD négatif',
           'Prix < EMA20 et EMA50',
           'R/R > 2.0',
+          'Prix < nuage Ichimoku',
+          'Stoch RSI zone favorable',
         ]
 
   return {
@@ -656,7 +695,7 @@ function buildConfluenceResult(mtfMap) {
     signalTone,
     checklist: checkLabels.map((label, i) => ({ label, ok: checks[i] })),
     checksPassed,
-    checksTotal: 7,
+    checksTotal: 9,
     trade: m15.trade,
     indicators: m15.indicators,
   }
@@ -738,6 +777,8 @@ function simulateComputedForItem(item, prevSim) {
   const emaActive = isLong ? emaBull : !emaBull
   const bbActive = isLong ? entry >= bb.middle : entry <= bb.middle
 
+  const stochKSim = isLong ? 15 + Math.random() * 25 : 55 + Math.random() * 35
+  const williamsRSim = isLong ? -85 - Math.random() * 15 : -35 + Math.random() * 35
   return {
     computed: {
       score,
@@ -749,6 +790,9 @@ function simulateComputedForItem(item, prevSim) {
         macd: { hist: macdHist },
         bb,
         atr,
+        stochRsi: { k: stochKSim, d: stochKSim - 5 },
+        williamsR: williamsRSim,
+        ichimoku: { aboveCloud: isLong },
       },
       trade: {
         direction,
@@ -764,6 +808,8 @@ function simulateComputedForItem(item, prevSim) {
         MACD: macdActive,
         EMA: emaActive,
         BB: bbActive,
+        'Stoch RSI': stochKSim < 20 && isLong,
+        'Williams %R': (williamsRSim < -80 && isLong) || (williamsRSim > -20 && !isLong),
       },
     },
     nextSim: { score, entry },
@@ -784,6 +830,9 @@ function computeIndicatorsAndTrade(candles) {
   const macd = computeMACD(closes, 12, 26, 9)
   const bb = computeBollinger(closes, 20, 2)
   const atr = computeATR(candles, 14)
+  const stochRsi = computeStochRSI(closes, 14, 3, 3)
+  const williamsR = computeWilliamsR(candles, 14)
+  const ichimoku = computeIchimokuCloud(candles, 9, 26, 52)
   if (rsi == null || macd == null || bb == null || atr == null) return null
 
   const trendDiff = (ema20 - ema50) / entry
@@ -855,6 +904,14 @@ function computeIndicatorsAndTrade(candles) {
   const rsiActive = isLong ? rsi >= 55 : rsi <= 45
   const macdActive = isLong ? macdBull : !macdBull
   const bbActive = isLong ? entry >= bb.middle : entry <= bb.middle
+  const stochK = stochRsi?.k ?? 50
+  const stochRsiOversold = stochK < 20
+  const stochRsiOverbought = stochK > 80
+  const stochRsiFavLong = stochRsiOversold
+  const stochRsiFavShort = stochRsiOverbought
+  const williamsOversold = williamsR != null && williamsR < -80
+  const williamsOverbought = williamsR != null && williamsR > -20
+  const williamsActive = isLong ? williamsOversold : williamsOverbought
 
   return {
     score,
@@ -866,6 +923,9 @@ function computeIndicatorsAndTrade(candles) {
       macd,
       bb,
       atr,
+      stochRsi: stochRsi ? { k: stochK, d: stochRsi.d } : null,
+      williamsR,
+      ichimoku,
     },
     trade: {
       direction,
@@ -881,6 +941,8 @@ function computeIndicatorsAndTrade(candles) {
       MACD: macdActive,
       EMA: emaActive,
       BB: bbActive,
+      'Stoch RSI': stochRsiFavLong && isLong ? true : stochRsiFavShort && !isLong,
+      'Williams %R': williamsActive,
     },
   }
 }
@@ -921,6 +983,7 @@ function TradingViewAdvancedChart({ symbol, tvInterval }) {
       save_image: false,
       calendar: false,
       support_host: 'https://www.tradingview.com',
+      studies: ['IchimokuCloud@tv-basicstudies'],
     })
 
     el.appendChild(script)
@@ -998,7 +1061,7 @@ function SignalIdealPanel({ item, result }) {
     const prompt = `Tu es un expert en trading. Analyse ces données techniques et donne un avis concis en français :
 actif=${item.label}
 scores timeframes: 1D=${conf.mtfScores['1D']} | 4H=${conf.mtfScores['4H']} | 15m=${conf.mtfScores['15m']}
-indicateurs: RSI=${Number.isFinite(indicators.rsi) ? indicators.rsi.toFixed(2) : 'NA'}, MACD.hist=${Number.isFinite(indicators?.macd?.hist) ? indicators.macd.hist.toFixed(5) : 'NA'}, EMA20=${Number.isFinite(indicators.ema20) ? indicators.ema20.toFixed(4) : 'NA'}, EMA50=${Number.isFinite(indicators.ema50) ? indicators.ema50.toFixed(4) : 'NA'}, BB.width=${Number.isFinite(indicators.bb?.width) ? indicators.bb.width.toFixed(5) : 'NA'}
+indicateurs: RSI=${Number.isFinite(indicators.rsi) ? indicators.rsi.toFixed(2) : 'NA'}, MACD.hist=${Number.isFinite(indicators?.macd?.hist) ? indicators.macd.hist.toFixed(5) : 'NA'}, Stoch RSI=${Number.isFinite(indicators.stochRsi?.k) ? indicators.stochRsi.k.toFixed(1) : 'NA'}, Williams %R=${Number.isFinite(indicators.williamsR) ? indicators.williamsR.toFixed(1) : 'NA'}, Ichimoku=${indicators.ichimoku?.aboveCloud ? 'au-dessus nuage' : 'sous nuage'}
 direction recommandee=${conf.recommendation}
 checklist validee=${conf.checksPassed}/${conf.checksTotal}
 Dis si c'est un bon setup ou pas et pourquoi.
@@ -1169,6 +1232,17 @@ Maximum 5 lignes.`
           <div className="signal-chip is-green">
             BB w {Number.isFinite(indicators.bb?.width) ? indicators.bb.width.toFixed(3) : '—'}
           </div>
+          <div
+            className={`signal-chip ${(indicators.stochRsi?.k ?? 50) < 20 ? 'is-green' : (indicators.stochRsi?.k ?? 50) > 80 ? 'is-red' : ''}`}
+          >
+            Stoch RSI {Number.isFinite(indicators.stochRsi?.k) ? indicators.stochRsi.k.toFixed(1) : '—'}
+            {(indicators.stochRsi?.k ?? 50) < 20 ? ' (surv.)' : (indicators.stochRsi?.k ?? 50) > 80 ? ' (surch.)' : ''}
+          </div>
+          <div
+            className={`signal-chip ${indicators.williamsR != null && indicators.williamsR < -80 ? 'is-green' : indicators.williamsR != null && indicators.williamsR > -20 ? 'is-red' : ''}`}
+          >
+            W%R {Number.isFinite(indicators.williamsR) ? indicators.williamsR.toFixed(1) : '—'}
+          </div>
         </div>
       </div>
     </div>
@@ -1186,7 +1260,7 @@ export default function App() {
   )
 
   const [selectedTvSymbol, setSelectedTvSymbol] = useState(WATCHLIST[0].tvSymbol)
-  const [selectedTimeframeId, setSelectedTimeframeId] = useState(TIMEFRAMES[0].id)
+  const [selectedTimeframeId, setSelectedTimeframeId] = useState(TIMEFRAMES[2].id)
   const selectedTimeframe = useMemo(
     () => TIMEFRAMES.find((t) => t.id === selectedTimeframeId) ?? TIMEFRAMES[0],
     [selectedTimeframeId],
@@ -1649,7 +1723,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className={`timeframe-block ${chartFullscreen ? 'is-hidden' : ''}`}>
+          <div className="timeframe-block">
             <div className="timeframe-buttons" role="tablist" aria-label="Timeframe">
               {TIMEFRAMES.map((t) => (
                 <button
