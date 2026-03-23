@@ -872,6 +872,10 @@ function TradingViewAdvancedChart({ symbol, tvInterval }) {
 }
 
 function SignalIdealPanel({ item, result }) {
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState('')
+  const [aiText, setAiText] = useState('')
+
   if (!result) {
     return (
       <div className="trade-empty">
@@ -918,6 +922,42 @@ function SignalIdealPanel({ item, result }) {
   const rrPct = clamp(((rrClamped - 1.5) / (5.0 - 1.5)) * 100, 0, 100)
   const rrText = Number.isFinite(rrClamped) ? rrClamped.toFixed(2) : '—'
 
+  const callClaudeAnalysis = async () => {
+    setAiError('')
+
+    const prompt = `Tu es un expert en trading. Analyse ces données techniques et donne un avis concis en français :
+actif=${item.label}
+scores timeframes: 1D=${conf.mtfScores['1D']} | 4H=${conf.mtfScores['4H']} | 15m=${conf.mtfScores['15m']}
+indicateurs: RSI=${Number.isFinite(indicators.rsi) ? indicators.rsi.toFixed(2) : 'NA'}, MACD.hist=${Number.isFinite(indicators?.macd?.hist) ? indicators.macd.hist.toFixed(5) : 'NA'}, EMA20=${Number.isFinite(indicators.ema20) ? indicators.ema20.toFixed(4) : 'NA'}, EMA50=${Number.isFinite(indicators.ema50) ? indicators.ema50.toFixed(4) : 'NA'}, BB.width=${Number.isFinite(indicators.bb?.width) ? indicators.bb.width.toFixed(5) : 'NA'}
+direction recommandee=${conf.recommendation}
+checklist validee=${conf.checksPassed}/${conf.checksTotal}
+Dis si c'est un bon setup ou pas et pourquoi.
+Maximum 5 lignes.`
+
+    setAiLoading(true)
+    try {
+      const res = await fetch('/api/claude', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ prompt }),
+      })
+
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok) {
+        throw new Error(data?.error || `Proxy HTTP ${res.status}`)
+      }
+
+      setAiText(typeof data?.text === 'string' ? data.text : 'Aucune reponse IA.')
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : 'Erreur IA')
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
   return (
     <div className="trade-panel">
       <div className="trade-top">
@@ -951,6 +991,28 @@ function SignalIdealPanel({ item, result }) {
           ))}
         </div>
       </div>
+
+      <div className="ai-actions">
+        <button
+          type="button"
+          className="ai-btn"
+          onClick={callClaudeAnalysis}
+          disabled={aiLoading}
+        >
+          {aiLoading ? 'Analyse IA en cours...' : '🤖 Analyse IA'}
+        </button>
+      </div>
+
+      {(aiText || aiError) && (
+        <div className="ai-panel">
+          <div className="ai-title">💬 Avis IA</div>
+          {aiError ? (
+            <div className="ai-error">{aiError}</div>
+          ) : (
+            <div className="ai-text">{aiText}</div>
+          )}
+        </div>
+      )}
 
       <div className="trade-grid">
         <div className="trade-row">

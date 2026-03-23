@@ -937,3 +937,60 @@
   background: rgba(0, 229, 160, 0.12);
   color: rgba(0, 229, 160, 0.98);
 }
+
+.ai-actions {
+  margin-top: 6px;
+}
+
+.ai-btn {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(2, 6, 23, 0.3);
+  color: rgba(229, 231, 235, 0.98);
+  font-weight: 900;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.ai-btn:hover:enabled {
+  transform: translateY(-1px);
+  border-color: rgba(0, 229, 160, 0.45);
+  background: rgba(0, 229, 160, 0.1);
+}
+
+.ai-btn:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.ai-panel {
+  margin-top: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(16, 25, 39, 0.55);
+}
+
+.ai-title {
+  font-size: 12px;
+  color: rgba(229, 231, 235, 0.85);
+  font-weight: 900;
+  margin-bottom: 8px;
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+}
+
+.ai-text {
+  white-space: pre-wrap;
+  line-height: 1.45;
+  color: rgba(229, 231, 235, 0.92);
+  font-size: 12px;
+}
+
+.ai-error {
+  color: rgba(255, 61, 90, 0.95);
+  font-size: 12px;
+  font-weight: 800;
+}
