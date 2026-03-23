@@ -540,6 +540,72 @@ function getNearestResistance(candles, entry, pivot = 5) {
   return fallback > entry ? fallback : null
 }
 
+/** Détecte les patterns de chandeliers japonais sur les dernières bougies. */
+function detectCandlestickPattern(candles) {
+  if (!candles || candles.length < 3) return { name: null, bullish: null }
+  const c = (i) => candles[candles.length - 1 - i]
+  const curr = c(0)
+  const prev = c(1)
+  const prev2 = c(2)
+
+  const body = (x) => Math.abs(x.close - x.open)
+  const upperWick = (x) => x.high - Math.max(x.open, x.close)
+  const lowerWick = (x) => Math.min(x.open, x.close) - x.low
+  const range = (x) => x.high - x.low || 1e-9
+  const isGreen = (x) => x.close > x.open
+  const isRed = (x) => x.close < x.open
+  const isDoji = (x) => body(x) / range(x) < 0.15
+  const bodySmall = (x) => body(x) / range(x) < 0.35
+
+  const bCurr = body(curr)
+  const bPrev = body(prev)
+  const avgPrice = candles.slice(-10).reduce((s, x) => s + x.close, 0) / Math.min(10, candles.length)
+
+  // --- HAUSSIERS ---
+  if (bCurr > 1e-12 && lowerWick(curr) >= 2 * bCurr && upperWick(curr) < bCurr * 0.5 &&
+      curr.close < avgPrice * 1.02) {
+    return { name: 'Hammer', bullish: true }
+  }
+  if (isGreen(curr) && isRed(prev) && curr.open <= prev.close && curr.close >= prev.open &&
+      bCurr > bPrev * 1.05) {
+    return { name: 'Bullish Engulfing', bullish: true }
+  }
+  if (isRed(prev2) && body(prev2) > 1e-9 && (isDoji(prev) || bodySmall(prev)) && isGreen(curr) &&
+      curr.close > (prev2.open + prev2.close) / 2) {
+    return { name: 'Morning Star', bullish: true }
+  }
+  if (isDoji(curr) && (upperWick(curr) + lowerWick(curr)) > body(curr) * 2) {
+    return { name: 'Bullish Doji', bullish: true }
+  }
+  if (isGreen(curr) && isRed(prev) && curr.open < prev.low && curr.close > prev.open &&
+      curr.close > prev.open + (prev.close - prev.open) * 0.5) {
+    return { name: 'Piercing Line', bullish: true }
+  }
+
+  // --- BAISSIERS ---
+  if (bCurr > 1e-12 && upperWick(curr) >= 2 * bCurr && lowerWick(curr) < bCurr * 0.5) {
+    return { name: 'Shooting Star', bullish: false }
+  }
+  if (isRed(curr) && isGreen(prev) && curr.open >= prev.close && curr.close <= prev.open &&
+      bCurr > bPrev * 1.05) {
+    return { name: 'Bearish Engulfing', bullish: false }
+  }
+  if (isGreen(prev2) && body(prev2) > 1e-9 && (isDoji(prev) || bodySmall(prev)) && isRed(curr) &&
+      curr.close < (prev2.open + prev2.close) / 2) {
+    return { name: 'Evening Star', bullish: false }
+  }
+  if (bCurr > 1e-12 && lowerWick(curr) >= 2 * bCurr && upperWick(curr) < bCurr * 0.5 &&
+      curr.close > avgPrice * 1.02) {
+    return { name: 'Hanging Man', bullish: false }
+  }
+  if (isRed(curr) && isGreen(prev) && curr.open > prev.high && curr.close < prev.close &&
+      curr.close < prev.open + (prev.close - prev.open) * 0.5) {
+    return { name: 'Dark Cloud Cover', bullish: false }
+  }
+
+  return { name: null, bullish: null }
+}
+
 function scoreToBadgeClass(score) {
   if (score > 65) return 'badge--good'
   if (score >= 40) return 'badge--mid'
@@ -608,6 +674,9 @@ function buildConfluenceResult(mtfMap) {
   const stochK = m15.indicators.stochRsi?.k ?? 50
   const stochRsiFavLong = stochK < 20
   const stochRsiFavShort = stochK > 80
+  const cp = m15.indicators.candlestickPattern
+  const patternCheckLong = cp?.bullish === true
+  const patternCheckShort = cp?.bullish === false
 
   const longChecks = [
     score1dOkLong,
@@ -619,6 +688,7 @@ function buildConfluenceResult(mtfMap) {
     rrOk,
     ichimokuAbove,
     stochRsiFavLong,
+    patternCheckLong,
   ]
 
   const shortChecks = [
@@ -631,6 +701,7 @@ function buildConfluenceResult(mtfMap) {
     rrOk,
     !ichimokuAbove,
     stochRsiFavShort,
+    patternCheckShort,
   ]
 
   const longCount = longChecks.filter(Boolean).length
@@ -643,14 +714,14 @@ function buildConfluenceResult(mtfMap) {
   let checksPassed = longCount
   let checksDirection = 'LONG'
 
-  if (longCount >= 6 && longCount >= shortCount) {
+  if (longCount >= 7 && longCount >= shortCount) {
     recommendation = 'LONG'
     signalBadge = 'LONG IDÉAL'
     signalTone = 'good'
     checks = longChecks
     checksPassed = longCount
     checksDirection = 'LONG'
-  } else if (shortCount >= 6 && shortCount > longCount) {
+  } else if (shortCount >= 7 && shortCount > longCount) {
     recommendation = 'SHORT'
     signalBadge = 'SHORT IDÉAL'
     signalTone = 'bad'
@@ -671,6 +742,7 @@ function buildConfluenceResult(mtfMap) {
           'R/R > 2.0',
           'Prix > nuage Ichimoku',
           'Stoch RSI zone favorable',
+          'Pattern de retournement détecté',
         ]
       : [
           'Score 1D < 40',
@@ -682,6 +754,7 @@ function buildConfluenceResult(mtfMap) {
           'R/R > 2.0',
           'Prix < nuage Ichimoku',
           'Stoch RSI zone favorable',
+          'Pattern de retournement détecté',
         ]
 
   return {
@@ -695,7 +768,7 @@ function buildConfluenceResult(mtfMap) {
     signalTone,
     checklist: checkLabels.map((label, i) => ({ label, ok: checks[i] })),
     checksPassed,
-    checksTotal: 9,
+    checksTotal: 10,
     trade: m15.trade,
     indicators: m15.indicators,
   }
@@ -793,6 +866,7 @@ function simulateComputedForItem(item, prevSim) {
         stochRsi: { k: stochKSim, d: stochKSim - 5 },
         williamsR: williamsRSim,
         ichimoku: { aboveCloud: isLong },
+        candlestickPattern: Math.random() > 0.7 ? { name: isLong ? 'Hammer' : 'Shooting Star', bullish: isLong } : null,
       },
       trade: {
         direction,
@@ -833,6 +907,7 @@ function computeIndicatorsAndTrade(candles) {
   const stochRsi = computeStochRSI(closes, 14, 3, 3)
   const williamsR = computeWilliamsR(candles, 14)
   const ichimoku = computeIchimokuCloud(candles, 9, 26, 52)
+  const candlestickPattern = detectCandlestickPattern(candles)
   if (rsi == null || macd == null || bb == null || atr == null) return null
 
   const trendDiff = (ema20 - ema50) / entry
@@ -848,7 +923,10 @@ function computeIndicatorsAndTrade(candles) {
   const directionFactor = entry >= bb.middle ? 1 : 0.5
   const bbScore = volStrength * directionFactor * 20
 
-  const score = Math.round(clamp(trendScore + rsiScore + macdScore + bbScore, 0, 100))
+  let score = Math.round(clamp(trendScore + rsiScore + macdScore + bbScore, 0, 100))
+  if (candlestickPattern.name) {
+    score = clamp(score + (candlestickPattern.bullish ? 10 : -10), 0, 100)
+  }
 
   // Direction LONG/SHORT based on majority of bullish signals.
   const emaBull = ema20 > ema50
@@ -1061,7 +1139,7 @@ function SignalIdealPanel({ item, result }) {
     const prompt = `Tu es un expert en trading. Analyse ces données techniques et donne un avis concis en français :
 actif=${item.label}
 scores timeframes: 1D=${conf.mtfScores['1D']} | 4H=${conf.mtfScores['4H']} | 15m=${conf.mtfScores['15m']}
-indicateurs: RSI=${Number.isFinite(indicators.rsi) ? indicators.rsi.toFixed(2) : 'NA'}, MACD.hist=${Number.isFinite(indicators?.macd?.hist) ? indicators.macd.hist.toFixed(5) : 'NA'}, Stoch RSI=${Number.isFinite(indicators.stochRsi?.k) ? indicators.stochRsi.k.toFixed(1) : 'NA'}, Williams %R=${Number.isFinite(indicators.williamsR) ? indicators.williamsR.toFixed(1) : 'NA'}, Ichimoku=${indicators.ichimoku?.aboveCloud ? 'au-dessus nuage' : 'sous nuage'}
+indicateurs: RSI=${Number.isFinite(indicators.rsi) ? indicators.rsi.toFixed(2) : 'NA'}, MACD.hist=${Number.isFinite(indicators?.macd?.hist) ? indicators.macd.hist.toFixed(5) : 'NA'}, Stoch RSI=${Number.isFinite(indicators.stochRsi?.k) ? indicators.stochRsi.k.toFixed(1) : 'NA'}, Williams %R=${Number.isFinite(indicators.williamsR) ? indicators.williamsR.toFixed(1) : 'NA'}, Ichimoku=${indicators.ichimoku?.aboveCloud ? 'au-dessus nuage' : 'sous nuage'}${indicators.candlestickPattern?.name ? `, Pattern chandelier=${indicators.candlestickPattern.name} (${indicators.candlestickPattern.bullish ? 'haussiere' : 'baissiere'})` : ''}
 direction recommandee=${conf.recommendation}
 checklist validee=${conf.checksPassed}/${conf.checksTotal}
 Dis si c'est un bon setup ou pas et pourquoi.
@@ -1243,6 +1321,14 @@ Maximum 5 lignes.`
           >
             W%R {Number.isFinite(indicators.williamsR) ? indicators.williamsR.toFixed(1) : '—'}
           </div>
+          {indicators.candlestickPattern?.name && (
+            <div
+              className={`signal-chip ${indicators.candlestickPattern.bullish ? 'is-green' : 'is-red'}`}
+              title={`Pattern ${indicators.candlestickPattern.bullish ? 'haussiere' : 'baissiere'}`}
+            >
+              🕯️ {indicators.candlestickPattern.name}
+            </div>
+          )}
         </div>
       </div>
     </div>
