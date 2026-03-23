@@ -106,6 +106,11 @@ export default async function handler(req, res) {
     })
   }
 
+  const model =
+    typeof body?.model === 'string' && body.model.trim()
+      ? body.model.trim()
+      : 'claude-haiku-4-5-20251001'
+
   let anthropicRes
   try {
     anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
@@ -116,7 +121,7 @@ export default async function handler(req, res) {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-haiku-3-5-20251001',
+        model,
         max_tokens: 240,
         messages: [{ role: 'user', content: prompt }],
       }),

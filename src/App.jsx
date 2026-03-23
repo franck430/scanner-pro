@@ -6,6 +6,7 @@ const BINANCE_LIMIT = 100
 const TWELVE_DATA_LIMIT = 100
 const SCORE_HISTORY_LEN = 24
 const TWELVE_DATA_KEY = import.meta.env.VITE_TWELVE_DATA_KEY
+const CLAUDE_MODEL = 'claude-haiku-4-5-20251001'
 
 const FILTERS = ['Tous', 'Crypto', 'Forex', 'Indices', 'Matières', '🔥 Signaux forts']
 const STRONG_SIGNAL_FILTER = '🔥 Signaux forts'
@@ -941,7 +942,7 @@ Maximum 5 lignes.`
         headers: {
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt, model: CLAUDE_MODEL }),
       })
 
       const data = await res.json().catch(() => ({}))
