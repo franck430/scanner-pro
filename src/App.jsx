@@ -7,7 +7,14 @@ const TWELVE_DATA_LIMIT = 100
 const SCORE_HISTORY_LEN = 24
 const TWELVE_DATA_KEY = import.meta.env.VITE_TWELVE_DATA_KEY
 
-const FILTERS = ['Tous', 'Crypto', 'Forex', 'Indices', 'Matières']
+const FILTERS = ['Tous', 'Crypto', 'Forex', 'Indices', 'Matières', '🔥 Signaux forts']
+const STRONG_SIGNAL_FILTER = '🔥 Signaux forts'
+
+const MTF_TIMEFRAMES = [
+  { key: '1D', binanceInterval: '1d', twelveInterval: '1day' },
+  { key: '4H', binanceInterval: '4h', twelveInterval: '4h' },
+  { key: '15m', binanceInterval: '15m', twelveInterval: '15min' },
+]
 
 const TIMEFRAMES = [
   {
@@ -153,7 +160,11 @@ function WatchlistPanel({
         {visibleItems.map((item) => {
           const isActive = item.tvSymbol === selectedTvSymbol
           const result = scanResults[item.tvSymbol]
-          const score = result && typeof result.score === 'number' ? result.score : null
+          const score =
+            result && typeof result.confluence?.score === 'number'
+              ? result.confluence.score
+              : null
+          const mtfScores = result?.confluence?.mtfScores
 
           const badgeClass = score == null ? 'badge--neutral' : scoreToBadgeClass(score)
           const trend = typeof score === 'number' ? scoreToTrend(score) : { arrow: '→', className: 'trend-mid' }
@@ -172,7 +183,14 @@ function WatchlistPanel({
               className={`watchlist-item ${isActive ? 'is-active' : ''}`}
               onClick={() => onPickSymbol(item.tvSymbol)}
             >
-              <span className="watchlist-label">{item.label}</span>
+              <span className="watchlist-left">
+                <span className="watchlist-label">{item.label}</span>
+                <span className="mtf-line">
+                  {mtfScores
+                    ? `1D:${mtfScores['1D']} | 4H:${mtfScores['4H']} | 15m:${mtfScores['15m']}`
+                    : '1D:— | 4H:— | 15m:—'}
+                </span>
+              </span>
 
               <span className="watchlist-right">
                 <span className={`trend-arrow ${trend.className}`}>{trend.arrow}</span>
@@ -337,8 +355,13 @@ function computeMACD(closes, fast = 12, slow = 26, signalPeriod = 9) {
   const signalSeries = ema(macdSeries, signalPeriod)
   const signalLast = signalSeries[signalSeries.length - 1]
   const hist = macdLast - signalLast
+  const macdPrev = macdSeries.length > 1 ? macdSeries[macdSeries.length - 2] : null
+  const signalPrev =
+    signalSeries.length > 1 ? signalSeries[signalSeries.length - 2] : null
+  const prevHist =
+    macdPrev != null && signalPrev != null ? macdPrev - signalPrev : null
 
-  return { macd: macdLast, signal: signalLast, hist }
+  return { macd: macdLast, signal: signalLast, hist, prevHist }
 }
 
 function computeBollinger(closes, period = 20, mult = 2) {
@@ -424,6 +447,149 @@ function scoreToBadgeClass(score) {
   if (score > 65) return 'badge--good'
   if (score >= 40) return 'badge--mid'
   return 'badge--bad'
+}
+
+function scoreLabel(score) {
+  if (score > 75) return 'CONFLUENCE FORTE'
+  if (score >= 50) return 'CONFLUENCE MOYENNE'
+  return 'PAS DE SIGNAL'
+}
+
+function buildConfluenceResult(mtfMap) {
+  const d1 = mtfMap['1D']
+  const h4 = mtfMap['4H']
+  const m15 = mtfMap['15m']
+  if (!d1 || !h4 || !m15) return null
+
+  const scores = {
+    '1D': d1.score,
+    '4H': h4.score,
+    '15m': m15.score,
+  }
+
+  const dirs = [d1.trade.direction, h4.trade.direction, m15.trade.direction]
+  const longAligned = dirs.filter((d) => d === 'LONG').length
+  const shortAligned = dirs.filter((d) => d === 'SHORT').length
+  const alignedCount = Math.max(longAligned, shortAligned)
+  const dominantDirection = longAligned >= shortAligned ? 'LONG' : 'SHORT'
+
+  let confluence = 0
+  if (alignedCount === 3) confluence += 40
+  else if (alignedCount === 2) confluence += 20
+
+  const rsi = m15.indicators.rsi
+  const rsiLong = rsi >= 50 && rsi <= 65
+  const rsiShort = rsi >= 35 && rsi <= 50
+  if (rsiLong) confluence += 20
+
+  const macdHist = m15.indicators.macd.hist
+  const macdPrev = m15.indicators.macd.prevHist
+  const macdPositiveGrowing =
+    Number.isFinite(macdHist) && Number.isFinite(macdPrev) && macdHist > 0 && macdHist > macdPrev
+  if (macdPositiveGrowing) confluence += 20
+
+  const price = m15.indicators.entry
+  const emaLong = price > m15.indicators.ema20 && price > m15.indicators.ema50
+  if (emaLong) confluence += 20
+
+  confluence = clamp(Math.round(confluence), 0, 100)
+
+  // 7-criteria checklist for signal panel.
+  const score1dOkLong = scores['1D'] > 65
+  const score4hOkLong = scores['4H'] > 65
+  const score15mOkLong = scores['15m'] > 65
+
+  const score1dOkShort = scores['1D'] < 40
+  const score4hOkShort = scores['4H'] < 40
+  const score15mOkShort = scores['15m'] < 40
+
+  const macdLong = Number.isFinite(macdHist) ? macdHist > 0 : false
+  const macdShort = Number.isFinite(macdHist) ? macdHist < 0 : false
+  const emaShort = price < m15.indicators.ema20 && price < m15.indicators.ema50
+  const rrOk = m15.trade.rr > 2
+
+  const longChecks = [
+    score1dOkLong,
+    score4hOkLong,
+    score15mOkLong,
+    rsiLong,
+    macdLong,
+    emaLong,
+    rrOk,
+  ]
+
+  const shortChecks = [
+    score1dOkShort,
+    score4hOkShort,
+    score15mOkShort,
+    rsiShort,
+    macdShort,
+    emaShort,
+    rrOk,
+  ]
+
+  const longCount = longChecks.filter(Boolean).length
+  const shortCount = shortChecks.filter(Boolean).length
+
+  let recommendation = 'ATTENDRE'
+  let signalBadge = 'EN ATTENTE'
+  let signalTone = 'mid'
+  let checks = longChecks
+  let checksPassed = longCount
+  let checksDirection = 'LONG'
+
+  if (longCount >= 5 && longCount >= shortCount) {
+    recommendation = 'LONG'
+    signalBadge = 'LONG IDÉAL'
+    signalTone = 'good'
+    checks = longChecks
+    checksPassed = longCount
+    checksDirection = 'LONG'
+  } else if (shortCount >= 5 && shortCount > longCount) {
+    recommendation = 'SHORT'
+    signalBadge = 'SHORT IDÉAL'
+    signalTone = 'bad'
+    checks = shortChecks
+    checksPassed = shortCount
+    checksDirection = 'SHORT'
+  }
+
+  const checkLabels =
+    checksDirection === 'LONG'
+      ? [
+          'Score 1D > 65',
+          'Score 4H > 65',
+          'Score 15m > 65',
+          'RSI entre 50-65',
+          'MACD positif',
+          'Prix > EMA20 et EMA50',
+          'R/R > 2.0',
+        ]
+      : [
+          'Score 1D < 40',
+          'Score 4H < 40',
+          'Score 15m < 40',
+          'RSI entre 35-50',
+          'MACD négatif',
+          'Prix < EMA20 et EMA50',
+          'R/R > 2.0',
+        ]
+
+  return {
+    score: confluence,
+    label: scoreLabel(confluence),
+    alignedCount,
+    dominantDirection,
+    mtfScores: scores,
+    recommendation,
+    signalBadge,
+    signalTone,
+    checklist: checkLabels.map((label, i) => ({ label, ok: checks[i] })),
+    checksPassed,
+    checksTotal: 7,
+    trade: m15.trade,
+    indicators: m15.indicators,
+  }
 }
 
 function simulateComputedForItem(item, prevSim) {
@@ -705,7 +871,7 @@ function TradingViewAdvancedChart({ symbol, tvInterval }) {
   )
 }
 
-function TradeAutoPanel({ item, result }) {
+function SignalIdealPanel({ item, result }) {
   if (!result) {
     return (
       <div className="trade-empty">
@@ -714,8 +880,8 @@ function TradeAutoPanel({ item, result }) {
     )
   }
 
-  const { trade, score, signals, indicators } = result
-  if (!trade || !indicators) {
+  const conf = result.confluence
+  if (!conf || !conf.trade || !conf.indicators) {
     return (
       <div className="trade-empty">
         Donnees en attente...
@@ -723,8 +889,13 @@ function TradeAutoPanel({ item, result }) {
     )
   }
 
-  const isLong = trade.direction === 'LONG'
-  const badgeClass = typeof score === 'number' ? scoreToBadgeClass(score) : 'badge--neutral'
+  const { trade, indicators } = conf
+  const signalClass =
+    conf.signalTone === 'good'
+      ? 'direction-pill--long'
+      : conf.signalTone === 'bad'
+        ? 'direction-pill--short'
+        : 'direction-pill--wait'
 
   const fmt = (n) => {
     const v = Number(n)
@@ -747,28 +918,37 @@ function TradeAutoPanel({ item, result }) {
   const rrPct = clamp(((rrClamped - 1.5) / (5.0 - 1.5)) * 100, 0, 100)
   const rrText = Number.isFinite(rrClamped) ? rrClamped.toFixed(2) : '—'
 
-  const signalChip = (key, label, value) => {
-    const active = Boolean(signals?.[key])
-    const cls = `signal-chip ${active ? 'is-green' : 'is-red'}`
-    return (
-      <div className={cls}>
-        {label} {value}
-      </div>
-    )
-  }
-
   return (
     <div className="trade-panel">
       <div className="trade-top">
-        <div
-          className={`direction-pill direction-pill--big ${
-            isLong ? 'direction-pill--long' : 'direction-pill--short'
-          }`}
-        >
-          {trade.direction}
+        <div className={`direction-pill direction-pill--big ${signalClass}`}>
+          {conf.signalBadge}
         </div>
-        <div className={`score-badge score-badge--big ${badgeClass}`}>
-          {typeof score === 'number' ? score : '—'}
+        <div className={`score-badge score-badge--big ${scoreToBadgeClass(conf.score)}`}>{conf.score}</div>
+      </div>
+
+      <div className="panel-help">{conf.label}</div>
+
+      <div className="trade-row">
+        <div className="trade-k">Direction recommandee</div>
+        <div className="trade-v mono">{conf.recommendation}</div>
+      </div>
+
+      <div className="trade-row">
+        <div className="trade-k">Confluence</div>
+        <div className="trade-v mono">
+          {conf.checksPassed}/{conf.checksTotal} criteres valides
+        </div>
+      </div>
+
+      <div className="signals">
+        <div className="signals-title">Checklist</div>
+        <div className="signals-row">
+          {conf.checklist.map((c) => (
+            <div key={c.label} className={`signal-chip ${c.ok ? 'is-green' : 'is-red'}`}>
+              {c.ok ? '✅' : '❌'} {c.label}
+            </div>
+          ))}
         </div>
       </div>
 
@@ -807,41 +987,38 @@ function TradeAutoPanel({ item, result }) {
             className="rr-fill"
             style={{
               width: `${rrPct}%`,
-              background: isLong
+              background: conf.recommendation === 'SHORT'
+                ? 'linear-gradient(90deg, rgba(255, 61, 90, 0.9), rgba(255, 61, 90, 0.2))'
+                : conf.recommendation === 'LONG'
                 ? 'linear-gradient(90deg, rgba(0, 229, 160, 0.9), rgba(0, 229, 160, 0.2))'
-                : 'linear-gradient(90deg, rgba(255, 61, 90, 0.9), rgba(255, 61, 90, 0.2))',
+                : 'linear-gradient(90deg, rgba(255, 176, 32, 0.9), rgba(255, 176, 32, 0.2))',
             }}
           />
         </div>
       </div>
 
       <div className="signals">
-        <div className="signals-title">Signaux actifs</div>
+        <div className="signals-title">Contexte 15m</div>
         <div className="signals-row">
-          {signalChip(
-            'RSI',
-            'RSI',
-            Number.isFinite(indicators.rsi) ? indicators.rsi.toFixed(1) : '—',
-          )}
-          {signalChip(
-            'MACD',
-            'MACD',
-            Number.isFinite(indicators?.macd?.hist)
-              ? indicators.macd.hist.toFixed(4)
-              : '—',
-          )}
-          {signalChip(
-            'EMA',
-            'EMA',
-            `${Number.isFinite(indicators.ema20) ? indicators.ema20.toFixed(2) : '—'} / ${
-              Number.isFinite(indicators.ema50) ? indicators.ema50.toFixed(2) : '—'
-            }`,
-          )}
-          {signalChip(
-            'BB',
-            'BB',
-            Number.isFinite(indicators.bb?.width) ? indicators.bb.width.toFixed(3) : '—',
-          )}
+          <div className={`signal-chip ${indicators.rsi >= 50 ? 'is-green' : 'is-red'}`}>
+            RSI {Number.isFinite(indicators.rsi) ? indicators.rsi.toFixed(1) : '—'}
+          </div>
+          <div className={`signal-chip ${indicators?.macd?.hist >= 0 ? 'is-green' : 'is-red'}`}>
+            MACD {Number.isFinite(indicators?.macd?.hist) ? indicators.macd.hist.toFixed(4) : '—'}
+          </div>
+          <div
+            className={`signal-chip ${
+              indicators.entry > indicators.ema20 && indicators.entry > indicators.ema50
+                ? 'is-green'
+                : 'is-red'
+            }`}
+          >
+            EMA {Number.isFinite(indicators.ema20) ? indicators.ema20.toFixed(2) : '—'} /{' '}
+            {Number.isFinite(indicators.ema50) ? indicators.ema50.toFixed(2) : '—'}
+          </div>
+          <div className="signal-chip is-green">
+            BB w {Number.isFinite(indicators.bb?.width) ? indicators.bb.width.toFixed(3) : '—'}
+          </div>
         </div>
       </div>
     </div>
@@ -850,8 +1027,11 @@ function TradeAutoPanel({ item, result }) {
 
 export default function App() {
   const [filter, setFilter] = useState('Tous')
-  const visibleItems = useMemo(
-    () => (filter === 'Tous' ? WATCHLIST : WATCHLIST.filter((x) => x.category === filter)),
+  const categoryItems = useMemo(
+    () =>
+      filter === 'Tous' || filter === STRONG_SIGNAL_FILTER
+        ? WATCHLIST
+        : WATCHLIST.filter((x) => x.category === filter),
     [filter],
   )
 
@@ -861,15 +1041,6 @@ export default function App() {
     () => TIMEFRAMES.find((t) => t.id === selectedTimeframeId) ?? TIMEFRAMES[0],
     [selectedTimeframeId],
   )
-  const binanceInterval = selectedTimeframe.binanceInterval
-  const twelveInterval = selectedTimeframe.twelveInterval
-
-  // Keep selected symbol valid when switching filters.
-  useEffect(() => {
-    if (!visibleItems.some((x) => x.tvSymbol === selectedTvSymbol)) {
-      setSelectedTvSymbol(visibleItems[0]?.tvSymbol ?? WATCHLIST[0].tvSymbol)
-    }
-  }, [visibleItems, selectedTvSymbol])
 
   const selectedItem = useMemo(
     () => WATCHLIST.find((x) => x.tvSymbol === selectedTvSymbol) ?? WATCHLIST[0],
@@ -885,8 +1056,12 @@ export default function App() {
   const [scanResults, setScanResults] = useState(() => {
     const initial = {}
     for (const item of WATCHLIST) {
-      const { computed } = simulateComputedForItem(item, null)
-      initial[item.tvSymbol] = computed
+      const mtfMap = {}
+      for (const tf of MTF_TIMEFRAMES) {
+        const { computed } = simulateComputedForItem(item, null)
+        mtfMap[tf.key] = computed
+      }
+      initial[item.tvSymbol] = { confluence: buildConfluenceResult(mtfMap) }
     }
     return initial
   })
@@ -896,6 +1071,22 @@ export default function App() {
   const lastScoreRef = useRef({})
   const scanningRef = useRef(false)
   const simStateRef = useRef({})
+
+  const visibleItems = useMemo(() => {
+    if (filter !== STRONG_SIGNAL_FILTER) return categoryItems
+    return WATCHLIST.filter((item) => {
+      const conf = scanResults[item.tvSymbol]?.confluence
+      if (!conf) return false
+      return conf.score > 75 && conf.trade.rr > 2 && conf.alignedCount >= 2
+    })
+  }, [filter, categoryItems, scanResults])
+
+  // Keep selected symbol valid when switching filters.
+  useEffect(() => {
+    if (!visibleItems.some((x) => x.tvSymbol === selectedTvSymbol)) {
+      setSelectedTvSymbol(visibleItems[0]?.tvSymbol ?? WATCHLIST[0].tvSymbol)
+    }
+  }, [visibleItems, selectedTvSymbol])
 
   const onPickSymbol = useCallback(
     (tvSymbol) => {
@@ -916,13 +1107,22 @@ export default function App() {
       const simPulseSyms = []
 
       const simUpdates = {}
-      for (const item of visibleItems) {
-        const prevSim = simStateRef.current[item.tvSymbol]
-        const { computed, nextSim } = simulateComputedForItem(item, prevSim)
-        simStateRef.current[item.tvSymbol] = nextSim
-        simUpdates[item.tvSymbol] = computed
+      for (const item of WATCHLIST) {
+        const prevGroup = simStateRef.current[item.tvSymbol] ?? {}
+        const mtfMap = {}
+        const nextGroup = {}
 
-        const nextScore = computed?.score
+        for (const tf of MTF_TIMEFRAMES) {
+          const { computed, nextSim } = simulateComputedForItem(item, prevGroup[tf.key])
+          mtfMap[tf.key] = computed
+          nextGroup[tf.key] = nextSim
+        }
+
+        const confluence = buildConfluenceResult(mtfMap)
+        simStateRef.current[item.tvSymbol] = nextGroup
+        simUpdates[item.tvSymbol] = { confluence }
+
+        const nextScore = confluence?.score
         if (typeof nextScore === 'number') {
           simHistoryScores[item.tvSymbol] = nextScore
           const prevScore = lastScoreRef.current[item.tvSymbol]
@@ -959,33 +1159,39 @@ export default function App() {
 
       setScanResults((prev) => ({ ...prev, ...simUpdates }))
 
-      const realDataItems = visibleItems.filter(
+      const realDataItems = WATCHLIST.filter(
         (x) => x.binanceSymbol || x.twelveSymbol,
       )
       if (realDataItems.length === 0) return
 
       const tasks = realDataItems.map(async (item) => {
-        let candles = []
-        if (item.binanceSymbol) {
-          candles = await fetchBinanceKlines(
-            item.binanceSymbol,
-            binanceInterval,
-            BINANCE_LIMIT,
-          )
-        } else if (item.twelveSymbol) {
-          candles = await fetchTwelveDataCandles(
-            item.twelveSymbol,
-            twelveInterval,
-            TWELVE_DATA_LIMIT,
-            TWELVE_DATA_KEY,
-          )
+        const mtfMap = {}
+        for (const tf of MTF_TIMEFRAMES) {
+          let candles = []
+          if (item.binanceSymbol) {
+            candles = await fetchBinanceKlines(
+              item.binanceSymbol,
+              tf.binanceInterval,
+              BINANCE_LIMIT,
+            )
+          } else if (item.twelveSymbol) {
+            candles = await fetchTwelveDataCandles(
+              item.twelveSymbol,
+              tf.twelveInterval,
+              TWELVE_DATA_LIMIT,
+              TWELVE_DATA_KEY,
+            )
+          }
+
+          if (candles.length < 80) throw new Error('Not enough candles')
+          const computed = computeIndicatorsAndTrade(candles)
+          if (!computed) throw new Error('Indicators unavailable')
+          mtfMap[tf.key] = computed
         }
 
-        // Need enough candles for EMA20/50 etc.
-        if (candles.length < 80) throw new Error('Not enough candles')
-        const computed = computeIndicatorsAndTrade(candles)
-        if (!computed) throw new Error('Indicators unavailable')
-        return { tvSymbol: item.tvSymbol, computed }
+        const confluence = buildConfluenceResult(mtfMap)
+        if (!confluence) throw new Error('Confluence unavailable')
+        return { tvSymbol: item.tvSymbol, confluence }
       })
 
       const settled = await Promise.allSettled(tasks)
@@ -995,20 +1201,15 @@ export default function App() {
 
       for (const s of settled) {
         if (s.status !== 'fulfilled') continue
-        const { tvSymbol, computed } = s.value
-        finalUpdates[tvSymbol] = computed
+        const { tvSymbol, confluence } = s.value
+        finalUpdates[tvSymbol] = { confluence }
 
-        const nextScore = computed?.score
+        const nextScore = confluence?.score
         if (typeof nextScore === 'number') {
           finalHistoryScores[tvSymbol] = nextScore
           const prevScore = lastScoreRef.current[tvSymbol]
           if (prevScore !== nextScore) finalPulseSyms.push(tvSymbol)
           lastScoreRef.current[tvSymbol] = nextScore
-        }
-
-        simStateRef.current[tvSymbol] = {
-          score: computed.score,
-          entry: computed.indicators.entry,
         }
       }
 
@@ -1043,7 +1244,7 @@ export default function App() {
     } finally {
       scanningRef.current = false
     }
-  }, [visibleItems, binanceInterval, twelveInterval])
+  }, [])
 
   useEffect(() => {
     scanNow()
@@ -1060,7 +1261,7 @@ export default function App() {
   }, [selectedTimeframeId])
 
   const selectedResult = scanResults[selectedTvSymbol]
-  const selectedComputed = selectedResult && selectedResult.score != null ? selectedResult : null
+  const selectedComputed = selectedResult && selectedResult.confluence ? selectedResult : null
 
   return (
     <div className="scanner-app">
@@ -1175,13 +1376,13 @@ export default function App() {
         </section>
 
         <aside className="panel panel-right">
-          <div className="panel-title">Trade auto</div>
-          <TradeAutoPanel item={selectedItem} result={selectedComputed} />
+          <div className="panel-title">Signal ideal</div>
+          <SignalIdealPanel item={selectedItem} result={selectedComputed} />
         </aside>
       </main>
 
       <footer className="scanner-footer">
-        Cryptos: Binance ({binanceInterval}, {BINANCE_LIMIT}). Forex/Indices/Matieres: Twelve Data ({twelveInterval}, {TWELVE_DATA_LIMIT}). Chart: TradingView ({selectedTimeframe.tradingViewInterval}).
+        Scores multi-timeframe 1D/4H/15m. Sources: Binance (crypto) + Twelve Data (forex/indices/matieres). Chart: TradingView ({selectedTimeframe.tradingViewInterval}).
       </footer>
     </div>
   )

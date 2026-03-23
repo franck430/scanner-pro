@@ -356,6 +356,19 @@
   gap: 10px;
 }
 
+.watchlist-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mtf-line {
+  font-size: 11px;
+  color: rgba(229, 231, 235, 0.7);
+  font-family: 'Space Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+}
+
 .trend-arrow {
   width: 22px;
   text-align: center;
@@ -792,6 +805,12 @@
   border-color: rgba(255, 61, 90, 0.55);
   background: rgba(255, 61, 90, 0.14);
   color: rgba(255, 61, 90, 0.98);
+}
+
+.direction-pill--wait {
+  border-color: rgba(255, 176, 32, 0.55);
+  background: rgba(255, 176, 32, 0.14);
+  color: rgba(255, 176, 32, 0.98);
 }
 
 .trade-grid {
