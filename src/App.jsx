@@ -3,7 +3,9 @@ import './App.css'
 
 const POLL_MS = 30000
 const BINANCE_LIMIT = 100
+const TWELVE_DATA_LIMIT = 100
 const SCORE_HISTORY_LEN = 24
+const TWELVE_DATA_KEY = import.meta.env.VITE_TWELVE_DATA_KEY
 
 const FILTERS = ['Tous', 'Crypto', 'Forex', 'Indices', 'Matières']
 
@@ -12,6 +14,7 @@ const TIMEFRAMES = [
     id: '15m',
     label: '15m',
     binanceInterval: '15m',
+    twelveInterval: '15min',
     tradingViewInterval: '15',
     context: 'Scalping / Day trading',
   },
@@ -19,6 +22,7 @@ const TIMEFRAMES = [
     id: '1H',
     label: '1H',
     binanceInterval: '1h',
+    twelveInterval: '1h',
     tradingViewInterval: '60',
     context: 'Day trading',
   },
@@ -26,6 +30,7 @@ const TIMEFRAMES = [
     id: '4H',
     label: '4H',
     binanceInterval: '4h',
+    twelveInterval: '4h',
     tradingViewInterval: '240',
     context: 'Swing trading',
   },
@@ -33,6 +38,7 @@ const TIMEFRAMES = [
     id: '1D',
     label: '1D',
     binanceInterval: '1d',
+    twelveInterval: '1day',
     tradingViewInterval: 'D',
     context: 'Position trading',
   },
@@ -40,6 +46,7 @@ const TIMEFRAMES = [
     id: '1W',
     label: '1W',
     binanceInterval: '1w',
+    twelveInterval: '1week',
     tradingViewInterval: 'W',
     context: 'Trading long terme',
   },
@@ -54,24 +61,24 @@ const WATCHLIST = [
   { label: 'BNB/USDT', category: 'Crypto', tvSymbol: 'BINANCE:BNBUSDT', binanceSymbol: 'BNBUSDT', decimals: 2, simBasePrice: 600 },
 
   // Forex
-  { label: 'EUR/USD', category: 'Forex', tvSymbol: 'FX:EURUSD', decimals: 5, simBasePrice: 1.08 },
-  { label: 'GBP/USD', category: 'Forex', tvSymbol: 'FX:GBPUSD', decimals: 5, simBasePrice: 1.28 },
-  { label: 'USD/JPY', category: 'Forex', tvSymbol: 'FX:USDJPY', decimals: 3, simBasePrice: 148 },
-  { label: 'AUD/USD', category: 'Forex', tvSymbol: 'FX:AUDUSD', decimals: 5, simBasePrice: 0.66 },
-  { label: 'USD/CHF', category: 'Forex', tvSymbol: 'FX:USDCHF', decimals: 5, simBasePrice: 0.91 },
-  { label: 'NZD/USD', category: 'Forex', tvSymbol: 'FX:NZDUSD', decimals: 5, simBasePrice: 0.61 },
-  { label: 'USD/CAD', category: 'Forex', tvSymbol: 'FX:USDCAD', decimals: 5, simBasePrice: 1.35 },
-  { label: 'EUR/GBP', category: 'Forex', tvSymbol: 'FX:EURGBP', decimals: 5, simBasePrice: 0.86 },
-  { label: 'EUR/JPY', category: 'Forex', tvSymbol: 'FX:EURJPY', decimals: 3, simBasePrice: 165 },
-  { label: 'GBP/JPY', category: 'Forex', tvSymbol: 'FX:GBPJPY', decimals: 3, simBasePrice: 192 },
+  { label: 'EUR/USD', category: 'Forex', tvSymbol: 'FX:EURUSD', twelveSymbol: 'EUR/USD', decimals: 5, simBasePrice: 1.08 },
+  { label: 'GBP/USD', category: 'Forex', tvSymbol: 'FX:GBPUSD', twelveSymbol: 'GBP/USD', decimals: 5, simBasePrice: 1.28 },
+  { label: 'USD/JPY', category: 'Forex', tvSymbol: 'FX:USDJPY', twelveSymbol: 'USD/JPY', decimals: 3, simBasePrice: 148 },
+  { label: 'AUD/USD', category: 'Forex', tvSymbol: 'FX:AUDUSD', twelveSymbol: 'AUD/USD', decimals: 5, simBasePrice: 0.66 },
+  { label: 'USD/CHF', category: 'Forex', tvSymbol: 'FX:USDCHF', twelveSymbol: 'USD/CHF', decimals: 5, simBasePrice: 0.91 },
+  { label: 'NZD/USD', category: 'Forex', tvSymbol: 'FX:NZDUSD', twelveSymbol: 'NZD/USD', decimals: 5, simBasePrice: 0.61 },
+  { label: 'USD/CAD', category: 'Forex', tvSymbol: 'FX:USDCAD', twelveSymbol: 'USD/CAD', decimals: 5, simBasePrice: 1.35 },
+  { label: 'EUR/GBP', category: 'Forex', tvSymbol: 'FX:EURGBP', twelveSymbol: 'EUR/GBP', decimals: 5, simBasePrice: 0.86 },
+  { label: 'EUR/JPY', category: 'Forex', tvSymbol: 'FX:EURJPY', twelveSymbol: 'EUR/JPY', decimals: 3, simBasePrice: 165 },
+  { label: 'GBP/JPY', category: 'Forex', tvSymbol: 'FX:GBPJPY', twelveSymbol: 'GBP/JPY', decimals: 3, simBasePrice: 192 },
 
   // Indices
-  { label: 'NAS100', category: 'Indices', tvSymbol: 'TVC:NDX', decimals: 2, simBasePrice: 18000 },
-  { label: 'SP500', category: 'Indices', tvSymbol: 'TVC:SPX', decimals: 2, simBasePrice: 5200 },
+  { label: 'NAS100', category: 'Indices', tvSymbol: 'TVC:NDX', twelveSymbol: 'NDX', decimals: 2, simBasePrice: 18000 },
+  { label: 'SP500', category: 'Indices', tvSymbol: 'TVC:SPX', twelveSymbol: 'SPX', decimals: 2, simBasePrice: 5200 },
 
   // Matières
-  { label: 'XAU/USD', category: 'Matières', tvSymbol: 'OANDA:XAUUSD', decimals: 2, simBasePrice: 2200 },
-  { label: 'XAG/USD', category: 'Matières', tvSymbol: 'OANDA:XAGUSD', decimals: 2, simBasePrice: 26 },
+  { label: 'XAU/USD', category: 'Matières', tvSymbol: 'OANDA:XAUUSD', twelveSymbol: 'XAU/USD', decimals: 2, simBasePrice: 2200 },
+  { label: 'XAG/USD', category: 'Matières', tvSymbol: 'OANDA:XAGUSD', twelveSymbol: 'XAG/USD', decimals: 2, simBasePrice: 26 },
   { label: 'WTI/USD', category: 'Matières', tvSymbol: 'TVC:USOIL', decimals: 2, simBasePrice: 75 },
 ]
 
@@ -223,6 +230,47 @@ async function fetchBinanceKlines(binanceSymbol, interval, limit) {
     }
   })
   .sort((a, b) => a.date.getTime() - b.date.getTime())
+}
+
+async function fetchTwelveDataCandles(twelveSymbol, interval, outputsize, apiKey) {
+  if (!apiKey) throw new Error('Missing Twelve Data API key')
+
+  const url =
+    `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(twelveSymbol)}` +
+    `&interval=${encodeURIComponent(interval)}` +
+    `&outputsize=${outputsize}` +
+    '&format=JSON' +
+    `&apikey=${encodeURIComponent(apiKey)}`
+
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`Twelve Data HTTP ${res.status}`)
+
+  const data = await res.json()
+  if (data.status === 'error') {
+    throw new Error(data.message || 'Twelve Data error')
+  }
+
+  if (!Array.isArray(data.values) || data.values.length === 0) return []
+
+  return data.values
+    .map((v) => ({
+      date: new Date(v.datetime),
+      open: parseFloat(v.open),
+      high: parseFloat(v.high),
+      low: parseFloat(v.low),
+      close: parseFloat(v.close),
+      volume: v.volume != null ? parseFloat(v.volume) : null,
+    }))
+    .filter(
+      (c) =>
+        Number.isFinite(c.open) &&
+        Number.isFinite(c.high) &&
+        Number.isFinite(c.low) &&
+        Number.isFinite(c.close) &&
+        c.date instanceof Date &&
+        !Number.isNaN(c.date.getTime()),
+    )
+    .sort((a, b) => a.date.getTime() - b.date.getTime())
 }
 
 function ema(values, period) {
@@ -814,6 +862,7 @@ export default function App() {
     [selectedTimeframeId],
   )
   const binanceInterval = selectedTimeframe.binanceInterval
+  const twelveInterval = selectedTimeframe.twelveInterval
 
   // Keep selected symbol valid when switching filters.
   useEffect(() => {
@@ -910,17 +959,28 @@ export default function App() {
 
       setScanResults((prev) => ({ ...prev, ...simUpdates }))
 
-      const cryptoItems = visibleItems.filter(
-        (x) => x.category === 'Crypto' && x.binanceSymbol,
+      const realDataItems = visibleItems.filter(
+        (x) => x.binanceSymbol || x.twelveSymbol,
       )
-      if (cryptoItems.length === 0) return
+      if (realDataItems.length === 0) return
 
-      const tasks = cryptoItems.map(async (item) => {
-        const candles = await fetchBinanceKlines(
-          item.binanceSymbol,
-          binanceInterval,
-          BINANCE_LIMIT,
-        )
+      const tasks = realDataItems.map(async (item) => {
+        let candles = []
+        if (item.binanceSymbol) {
+          candles = await fetchBinanceKlines(
+            item.binanceSymbol,
+            binanceInterval,
+            BINANCE_LIMIT,
+          )
+        } else if (item.twelveSymbol) {
+          candles = await fetchTwelveDataCandles(
+            item.twelveSymbol,
+            twelveInterval,
+            TWELVE_DATA_LIMIT,
+            TWELVE_DATA_KEY,
+          )
+        }
+
         // Need enough candles for EMA20/50 etc.
         if (candles.length < 80) throw new Error('Not enough candles')
         const computed = computeIndicatorsAndTrade(candles)
@@ -983,7 +1043,7 @@ export default function App() {
     } finally {
       scanningRef.current = false
     }
-  }, [visibleItems, binanceInterval])
+  }, [visibleItems, binanceInterval, twelveInterval])
 
   useEffect(() => {
     scanNow()
@@ -1121,7 +1181,7 @@ export default function App() {
       </main>
 
       <footer className="scanner-footer">
-        Cryptos: Binance klines ({binanceInterval}, {BINANCE_LIMIT}). Forex/Indices: scores simulés. Chart: TradingView ({selectedTimeframe.tradingViewInterval}).
+        Cryptos: Binance ({binanceInterval}, {BINANCE_LIMIT}). Forex/Indices/Matieres: Twelve Data ({twelveInterval}, {TWELVE_DATA_LIMIT}). Chart: TradingView ({selectedTimeframe.tradingViewInterval}).
       </footer>
     </div>
   )
