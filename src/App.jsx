@@ -607,15 +607,15 @@ function detectCandlestickPattern(candles) {
 }
 
 function scoreToBadgeClass(score) {
-  if (score > 65) return 'badge--good'
-  if (score >= 40) return 'badge--mid'
+  if (score > 75) return 'badge--good'
+  if (score >= 50) return 'badge--mid'
   return 'badge--bad'
 }
 
 function scoreLabel(score) {
-  if (score > 75) return 'CONFLUENCE FORTE'
-  if (score >= 50) return 'CONFLUENCE MOYENNE'
-  return 'PAS DE SIGNAL'
+  if (score > 75) return 'SIGNAL FORT'
+  if (score >= 50) return 'SURVEILLER'
+  return 'ATTENDRE'
 }
 
 function buildConfluenceResult(mtfMap) {
@@ -636,35 +636,31 @@ function buildConfluenceResult(mtfMap) {
   const alignedCount = Math.max(longAligned, shortAligned)
   const dominantDirection = longAligned >= shortAligned ? 'LONG' : 'SHORT'
 
-  let confluence = 0
-  if (alignedCount === 3) confluence += 40
-  else if (alignedCount === 2) confluence += 20
+  // Score final pondéré : 1D x3, 4H x2, 15m x1 → /6 pour 0-100
+  const weightedScore = Math.round(
+    clamp((scores['1D'] * 3 + scores['4H'] * 2 + scores['15m'] * 1) / 6, 0, 100)
+  )
 
   const rsi = m15.indicators.rsi
   const rsiLong = rsi >= 50 && rsi <= 65
   const rsiShort = rsi >= 35 && rsi <= 50
-  if (rsiLong) confluence += 20
 
   const macdHist = m15.indicators.macd.hist
   const macdPrev = m15.indicators.macd.prevHist
   const macdPositiveGrowing =
     Number.isFinite(macdHist) && Number.isFinite(macdPrev) && macdHist > 0 && macdHist > macdPrev
-  if (macdPositiveGrowing) confluence += 20
 
   const price = m15.indicators.entry
   const emaLong = price > m15.indicators.ema20 && price > m15.indicators.ema50
-  if (emaLong) confluence += 20
 
-  confluence = clamp(Math.round(confluence), 0, 100)
+  // Seuils : >75 signal fort, 50-75 surveiller, <50 attendre
+  const score1dOkLong = scores['1D'] > 75
+  const score4hOkLong = scores['4H'] > 75
+  const score15mOkLong = scores['15m'] > 75
 
-  // 7-criteria checklist for signal panel.
-  const score1dOkLong = scores['1D'] > 65
-  const score4hOkLong = scores['4H'] > 65
-  const score15mOkLong = scores['15m'] > 65
-
-  const score1dOkShort = scores['1D'] < 40
-  const score4hOkShort = scores['4H'] < 40
-  const score15mOkShort = scores['15m'] < 40
+  const score1dOkShort = scores['1D'] < 25
+  const score4hOkShort = scores['4H'] < 25
+  const score15mOkShort = scores['15m'] < 25
 
   const macdLong = Number.isFinite(macdHist) ? macdHist > 0 : false
   const macdShort = Number.isFinite(macdHist) ? macdHist < 0 : false
@@ -714,17 +710,31 @@ function buildConfluenceResult(mtfMap) {
   let checksPassed = longCount
   let checksDirection = 'LONG'
 
-  if (longCount >= 7 && longCount >= shortCount) {
+  if (longCount >= 7 && longCount >= shortCount && weightedScore > 75) {
     recommendation = 'LONG'
     signalBadge = 'LONG IDÉAL'
     signalTone = 'good'
     checks = longChecks
     checksPassed = longCount
     checksDirection = 'LONG'
-  } else if (shortCount >= 7 && shortCount > longCount) {
+  } else if (shortCount >= 7 && shortCount > longCount && weightedScore < 25) {
     recommendation = 'SHORT'
     signalBadge = 'SHORT IDÉAL'
     signalTone = 'bad'
+    checks = shortChecks
+    checksPassed = shortCount
+    checksDirection = 'SHORT'
+  } else if (longCount >= 7 && longCount >= shortCount) {
+    recommendation = 'LONG'
+    signalBadge = 'SURVEILLER LONG'
+    signalTone = 'mid'
+    checks = longChecks
+    checksPassed = longCount
+    checksDirection = 'LONG'
+  } else if (shortCount >= 7 && shortCount > longCount) {
+    recommendation = 'SHORT'
+    signalBadge = 'SURVEILLER SHORT'
+    signalTone = 'mid'
     checks = shortChecks
     checksPassed = shortCount
     checksDirection = 'SHORT'
@@ -733,9 +743,9 @@ function buildConfluenceResult(mtfMap) {
   const checkLabels =
     checksDirection === 'LONG'
       ? [
-          'Score 1D > 65',
-          'Score 4H > 65',
-          'Score 15m > 65',
+          'Score 1D > 75',
+          'Score 4H > 75',
+          'Score 15m > 75',
           'RSI entre 50-65',
           'MACD positif',
           'Prix > EMA20 et EMA50',
@@ -745,9 +755,9 @@ function buildConfluenceResult(mtfMap) {
           'Pattern de retournement détecté',
         ]
       : [
-          'Score 1D < 40',
-          'Score 4H < 40',
-          'Score 15m < 40',
+          'Score 1D < 25',
+          'Score 4H < 25',
+          'Score 15m < 25',
           'RSI entre 35-50',
           'MACD négatif',
           'Prix < EMA20 et EMA50',
@@ -758,8 +768,8 @@ function buildConfluenceResult(mtfMap) {
         ]
 
   return {
-    score: confluence,
-    label: scoreLabel(confluence),
+    score: weightedScore,
+    label: scoreLabel(weightedScore),
     alignedCount,
     dominantDirection,
     mtfScores: scores,
@@ -910,21 +920,33 @@ function computeIndicatorsAndTrade(candles) {
   const candlestickPattern = detectCandlestickPattern(candles)
   if (rsi == null || macd == null || bb == null || atr == null) return null
 
-  const trendDiff = (ema20 - ema50) / entry
-  const trendScore = clamp((trendDiff + 0.01) / 0.02, 0, 1) * 30
+  // Pondération par indicateur (total 100 pts) : EMA 25, Ichimoku 20, RSI 15, MACD 15, BB 10, Stoch RSI 8, Williams 7
+  const emaStrongBull = ema20 > ema50 && entry > ema20
+  const emaStrongBear = ema50 > ema20 && entry < ema50
+  const emaScore = emaStrongBull ? 25 : emaStrongBear ? 0 : 12.5
 
-  const rsiScore = clamp((rsi - 30) / 30, 0, 1) * 25
+  const ichimokuAbove = ichimoku?.aboveCloud ?? false
+  const ichimokuScore = ichimokuAbove ? 20 : 0
 
-  const histAbsNorm = Math.abs(macd.hist) / (entry * 0.002) // 0.2% move scale
+  const rsiScore = clamp((rsi - 30) / 40, 0, 1) * 15
+
+  const histAbsNorm = Math.abs(macd.hist) / (entry * 0.002)
   const histStrength = clamp(histAbsNorm, 0, 1)
-  const macdScore = macd.hist >= 0 ? histStrength * 25 : histStrength * 2.5
+  const macdScore = macd.hist >= 0 ? histStrength * 15 : histStrength * 1.5
 
-  const volStrength = clamp((bb.width - 0.01) / 0.04, 0, 1) // 1%..5%
-  const directionFactor = entry >= bb.middle ? 1 : 0.5
-  const bbScore = volStrength * directionFactor * 20
+  const volStrength = clamp((bb.width - 0.01) / 0.04, 0, 1)
+  const bbScore = (entry >= bb.middle ? volStrength : volStrength * 0.5) * 10
 
-  let score = Math.round(clamp(trendScore + rsiScore + macdScore + bbScore, 0, 100))
-  if (candlestickPattern.name) {
+  const stochK = stochRsi?.k ?? 50
+  const stochScore = stochK < 20 ? 8 : stochK > 80 ? 0 : 4
+
+  const williamsScore =
+    williamsR != null && williamsR < -80 ? 7 : williamsR != null && williamsR > -20 ? 0 : 3.5
+
+  let score = Math.round(
+    clamp(emaScore + ichimokuScore + rsiScore + macdScore + bbScore + stochScore + williamsScore, 0, 100)
+  )
+  if (candlestickPattern?.name) {
     score = clamp(score + (candlestickPattern.bullish ? 10 : -10), 0, 100)
   }
 
@@ -982,7 +1004,6 @@ function computeIndicatorsAndTrade(candles) {
   const rsiActive = isLong ? rsi >= 55 : rsi <= 45
   const macdActive = isLong ? macdBull : !macdBull
   const bbActive = isLong ? entry >= bb.middle : entry <= bb.middle
-  const stochK = stochRsi?.k ?? 50
   const stochRsiOversold = stochK < 20
   const stochRsiOverbought = stochK > 80
   const stochRsiFavLong = stochRsiOversold
@@ -1004,6 +1025,7 @@ function computeIndicatorsAndTrade(candles) {
       stochRsi: stochRsi ? { k: stochK, d: stochRsi.d } : null,
       williamsR,
       ichimoku,
+      candlestickPattern,
     },
     trade: {
       direction,
