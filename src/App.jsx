@@ -105,21 +105,28 @@ function buildTelegramAlertMessage(item, conf) {
 
 async function sendTelegramAlert(text) {
   const url = '/api/telegram'
-  console.log('[sendTelegramAlert] POST', url, 'text length:', text?.length ?? 0)
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ text }),
   })
-  const data = await res.json().catch((e) => {
-    console.error('[sendTelegramAlert] JSON parse error:', e)
-    return {}
-  })
-  console.log('[sendTelegramAlert] response', res.status, data)
+  const data = await res.json().catch(() => ({}))
   if (!res.ok) {
     const parts = [data.error, data.detail].filter(Boolean)
     throw new Error(parts.length > 0 ? parts.join('\n\n') : `Telegram HTTP ${res.status}`)
   }
+  return data
+}
+
+async function sendTelegramTestAlert(text) {
+  const url = '/api/telegram'
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text }),
+  })
+  const data = await res.json().catch(() => ({ error: 'Réponse non-JSON' }))
+  return { ok: res.ok && data?.ok, ...data }
 }
 
 function Sparkline({ values, tone }) {
@@ -1414,6 +1421,7 @@ export default function App() {
   const [chartFullscreen, setChartFullscreen] = useState(false)
   const [testAlertLoading, setTestAlertLoading] = useState(false)
   const [testAlertStatus, setTestAlertStatus] = useState(null)
+  const [testAlertResponse, setTestAlertResponse] = useState(null)
   const [telegramAlertsEnabled, setTelegramAlertsEnabled] = useState(() => {
     try {
       return localStorage.getItem(LS_TELEGRAM_ALERTS) === '1'
@@ -1661,32 +1669,24 @@ export default function App() {
 
   const handleTestAlert = useCallback(async () => {
     setTestAlertStatus(null)
+    setTestAlertResponse(null)
     setTestAlertLoading(true)
-    const time = new Date().toLocaleString('fr-FR', {
-      dateStyle: 'short',
-      timeStyle: 'medium',
-    })
-    const text = [
-      '🧪 TEST ALERTE - Scanner Pro',
-      `📊 Score : 85/100`,
-      `📈 Direction : LONG`,
-      `⏱ Confluence : 6/7 critères`,
-      `💰 Entrée : 65 000`,
-      `🛑 Stop Loss : 63 200`,
-      `🎯 Take Profit : 72 000`,
-      `⚖️ R/R : 2.85`,
-      `⏰ ${time}`,
-    ].join('\n')
+    const text = '🧪 Test Scanner Pro - connexion OK !'
     try {
-      console.log('[handleTestAlert] Envoi alerte test...')
-      await sendTelegramAlert(text)
-      console.log('[handleTestAlert] OK')
-      setTestAlertStatus('ok')
-      setTimeout(() => setTestAlertStatus(null), 3000)
+      const data = await sendTelegramTestAlert(text)
+      setTestAlertResponse(data)
+      setTestAlertStatus(data?.ok ? 'ok' : data?.error || 'Erreur')
+      setTimeout(() => {
+        setTestAlertStatus(null)
+        setTestAlertResponse(null)
+      }, 8000)
     } catch (err) {
-      console.error('[handleTestAlert] Erreur:', err)
       setTestAlertStatus(err instanceof Error ? err.message : 'Erreur')
-      setTimeout(() => setTestAlertStatus(null), 4000)
+      setTestAlertResponse({ error: err.message })
+      setTimeout(() => {
+        setTestAlertStatus(null)
+        setTestAlertResponse(null)
+      }, 8000)
     } finally {
       setTestAlertLoading(false)
     }
@@ -1810,9 +1810,10 @@ export default function App() {
           >
             {telegramAlertsEnabled ? '🔔' : '🔕'}
           </button>
-          <button
-            type="button"
-            className="telegram-test-btn"
+          <div style={{ position: 'relative' }}>
+            <button
+              type="button"
+              className="telegram-test-btn"
             onClick={handleTestAlert}
             disabled={testAlertLoading}
             title={
@@ -1830,6 +1831,29 @@ export default function App() {
                   ? '❌'
                   : '🧪 Test Alerte'}
           </button>
+          {testAlertResponse && (
+            <div className="telegram-response-debug" style={{
+              position: 'absolute',
+              top: '100%',
+              right: 0,
+              marginTop: 4,
+              padding: 8,
+              background: 'rgba(0,0,0,0.9)',
+              border: '1px solid rgba(148,163,184,0.3)',
+              borderRadius: 8,
+              fontSize: 11,
+              fontFamily: 'monospace',
+              maxWidth: 320,
+              maxHeight: 200,
+              overflow: 'auto',
+              zIndex: 100,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-all',
+            }}>
+              Réponse API: {JSON.stringify(testAlertResponse, null, 2)}
+            </div>
+          )}
+          </div>
           <button
             type="button"
             className="hamburger-btn mobile-only"

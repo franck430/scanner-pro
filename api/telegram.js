@@ -1,102 +1,76 @@
 /**
- * Proxy Vercel → Telegram Bot API (évite CORS + garde le token côté serveur).
- * Variables : TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+ * Proxy Vercel → Telegram Bot API
+ * Variables: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
  */
 
-function corsHeaders(res) {
+export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
-}
-
-function safeJson(res, status, payload) {
-  return res.status(status).json(payload)
-}
-
-async function parseJsonBody(req) {
-  if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
-    return req.body
-  }
-  if (typeof req.body === 'string') {
-    try {
-      return req.body ? JSON.parse(req.body) : {}
-    } catch (e) {
-      const err = new Error('Corps JSON invalide (string)')
-      err.cause = e
-      throw err
-    }
-  }
-  const chunks = []
-  for await (const chunk of req) {
-    chunks.push(chunk)
-  }
-  if (chunks.length === 0) return {}
-  const raw = Buffer.concat(chunks).toString('utf8')
-  if (!raw.trim()) return {}
-  try {
-    return JSON.parse(raw)
-  } catch (e) {
-    const err = new Error('Corps JSON invalide (stream)')
-    err.cause = e
-    throw err
-  }
-}
-
-export default async function handler(req, res) {
-  console.log('[api/telegram]', req.method, req.url)
-  corsHeaders(res)
 
   if (req.method === 'OPTIONS') {
     return res.status(204).end()
   }
 
   if (req.method !== 'POST') {
-    console.log('[api/telegram] 405 Method not allowed')
-    return safeJson(res, 405, { error: 'Method not allowed' })
+    return res.status(405).json({ error: 'Method not allowed' })
   }
 
   const token = process.env.TELEGRAM_BOT_TOKEN
   const chatId = process.env.TELEGRAM_CHAT_ID
-  const tokenPreview = token ? String(token).trim().slice(0, 10) : '(absent)'
-  console.log('[api/telegram] token present:', !!token, 'token[0:10]:', tokenPreview, 'chatId:', chatId ?? '(absent)')
+
+  const tokenPreview = token && typeof token === 'string' ? token.trim().slice(0, 15) : '(absent)'
+  console.log('[telegram] token présent:', !!token, 'token[0:15]:', tokenPreview, 'chatId:', chatId ?? '(absent)')
 
   if (!token || String(token).trim() === '') {
-    return safeJson(res, 500, {
+    return res.status(500).json({
+      ok: false,
       error: 'TELEGRAM_BOT_TOKEN manquant',
-      detail: 'Definissez TELEGRAM_BOT_TOKEN dans Vercel (Environment Variables).',
+      detail: 'Définissez TELEGRAM_BOT_TOKEN dans Vercel Environment Variables.',
+      telegramResponse: null,
     })
   }
-  if (chatId == null || String(chatId).trim() === '') {
-    return safeJson(res, 500, {
+
+  if (!chatId || String(chatId).trim() === '') {
+    return res.status(500).json({
+      ok: false,
       error: 'TELEGRAM_CHAT_ID manquant',
-      detail: 'Definissez TELEGRAM_CHAT_ID dans Vercel (Environment Variables).',
+      detail: 'Définissez TELEGRAM_CHAT_ID dans Vercel Environment Variables.',
+      telegramResponse: null,
     })
   }
 
   let body
   try {
-    body = await parseJsonBody(req)
-  } catch (e) {
-    return safeJson(res, 400, {
+    body = typeof req.body === 'object' && req.body !== null
+      ? req.body
+      : typeof req.body === 'string'
+        ? JSON.parse(req.body || '{}')
+        : {}
+  } catch {
+    return res.status(400).json({
+      ok: false,
       error: 'Corps JSON invalide',
-      detail: e instanceof Error ? e.message : String(e),
+      telegramResponse: null,
     })
   }
 
   const text = body?.text
   if (!text || typeof text !== 'string') {
-    console.log('[api/telegram] 400 text manquant, body:', JSON.stringify(body).slice(0, 200))
-    return safeJson(res, 400, { error: 'Champ "text" (string) requis' })
+    return res.status(400).json({
+      ok: false,
+      error: 'Champ "text" (string) requis',
+      telegramResponse: null,
+    })
   }
 
   const tokenTrimmed = String(token).trim()
   const url = `https://api.telegram.org/bot${tokenTrimmed}/sendMessage`
-  console.log('[api/telegram] URL:', `https://api.telegram.org/bot***/sendMessage`, 'text length:', text.length)
 
   try {
     const tgRes = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: String(chatId).trim(),
         text: text.slice(0, 4096),
@@ -105,35 +79,44 @@ export default async function handler(req, res) {
     })
 
     const rawBody = await tgRes.text()
-    let data
+    let telegramResponse
     try {
-      data = rawBody ? JSON.parse(rawBody) : {}
+      telegramResponse = rawBody ? JSON.parse(rawBody) : null
     } catch {
-      return safeJson(res, 502, {
-        error: 'Reponse Telegram non-JSON',
-        detail: rawBody.slice(0, 2000),
-        httpStatus: tgRes.status,
+      telegramResponse = { _raw: rawBody.slice(0, 500) }
+    }
+
+    if (!tgRes.ok) {
+      console.error('[telegram] Telegram HTTP', tgRes.status, rawBody)
+      return res.status(200).json({
+        ok: false,
+        error: `Telegram HTTP ${tgRes.status}`,
+        detail: telegramResponse?.description || rawBody.slice(0, 300),
+        telegramResponse,
       })
     }
 
-    if (!tgRes.ok || data.ok === false) {
-      const desc = data.description || data.error || `Telegram HTTP ${tgRes.status}`
-      console.log('[api/telegram] Telegram erreur:', tgRes.status, desc, JSON.stringify(data))
-      return safeJson(res, 502, {
-        error: desc,
-        detail: JSON.stringify(data),
-        httpStatus: tgRes.status,
+    if (telegramResponse?.ok !== true) {
+      console.error('[telegram] Telegram API error:', telegramResponse)
+      return res.status(200).json({
+        ok: false,
+        error: telegramResponse?.description || 'Erreur Telegram',
+        telegramResponse,
       })
     }
 
-    console.log('[api/telegram] 200 OK, message envoye')
-    return safeJson(res, 200, { ok: true, result: data.result })
-  } catch (e) {
-    const err = e instanceof Error ? e : new Error(String(e))
-    console.error('[api/telegram]', err)
-    return safeJson(res, 502, {
-      error: err.message,
-      detail: err.stack ? String(err.stack).slice(0, 1500) : '',
+    console.log('[telegram] Message envoyé avec succès')
+    return res.status(200).json({
+      ok: true,
+      telegramResponse,
+    })
+  } catch (err) {
+    console.error('[telegram]', err)
+    return res.status(502).json({
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      detail: err instanceof Error && err.stack ? err.stack.slice(0, 500) : '',
+      telegramResponse: null,
     })
   }
 }
