@@ -57,7 +57,8 @@ export default async function handler(req, res) {
 
   const token = process.env.TELEGRAM_BOT_TOKEN
   const chatId = process.env.TELEGRAM_CHAT_ID
-  console.log('[api/telegram] token present:', !!token, 'chatId:', chatId ?? '(absent)')
+  const tokenPreview = token ? String(token).trim().slice(0, 10) : '(absent)'
+  console.log('[api/telegram] token present:', !!token, 'token[0:10]:', tokenPreview, 'chatId:', chatId ?? '(absent)')
 
   if (!token || String(token).trim() === '') {
     return safeJson(res, 500, {
@@ -88,8 +89,9 @@ export default async function handler(req, res) {
     return safeJson(res, 400, { error: 'Champ "text" (string) requis' })
   }
 
-  const url = `https://api.telegram.org/bot${String(token).trim()}/sendMessage`
-  console.log('[api/telegram] POST vers Telegram, text length:', text.length)
+  const tokenTrimmed = String(token).trim()
+  const url = `https://api.telegram.org/bot${tokenTrimmed}/sendMessage`
+  console.log('[api/telegram] URL:', `https://api.telegram.org/bot***/sendMessage`, 'text length:', text.length)
 
   try {
     const tgRes = await fetch(url, {
