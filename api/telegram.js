@@ -43,6 +43,7 @@ async function parseJsonBody(req) {
 }
 
 export default async function handler(req, res) {
+  console.log('[api/telegram]', req.method, req.url)
   corsHeaders(res)
 
   if (req.method === 'OPTIONS') {
@@ -50,11 +51,13 @@ export default async function handler(req, res) {
   }
 
   if (req.method !== 'POST') {
+    console.log('[api/telegram] 405 Method not allowed')
     return safeJson(res, 405, { error: 'Method not allowed' })
   }
 
   const token = process.env.TELEGRAM_BOT_TOKEN
   const chatId = process.env.TELEGRAM_CHAT_ID
+  console.log('[api/telegram] token present:', !!token, 'chatId:', chatId ?? '(absent)')
 
   if (!token || String(token).trim() === '') {
     return safeJson(res, 500, {
@@ -81,10 +84,12 @@ export default async function handler(req, res) {
 
   const text = body?.text
   if (!text || typeof text !== 'string') {
+    console.log('[api/telegram] 400 text manquant, body:', JSON.stringify(body).slice(0, 200))
     return safeJson(res, 400, { error: 'Champ "text" (string) requis' })
   }
 
   const url = `https://api.telegram.org/bot${String(token).trim()}/sendMessage`
+  console.log('[api/telegram] POST vers Telegram, text length:', text.length)
 
   try {
     const tgRes = await fetch(url, {
@@ -111,6 +116,7 @@ export default async function handler(req, res) {
 
     if (!tgRes.ok || data.ok === false) {
       const desc = data.description || data.error || `Telegram HTTP ${tgRes.status}`
+      console.log('[api/telegram] Telegram erreur:', tgRes.status, desc, JSON.stringify(data))
       return safeJson(res, 502, {
         error: desc,
         detail: JSON.stringify(data),
@@ -118,6 +124,7 @@ export default async function handler(req, res) {
       })
     }
 
+    console.log('[api/telegram] 200 OK, message envoye')
     return safeJson(res, 200, { ok: true, result: data.result })
   } catch (e) {
     const err = e instanceof Error ? e : new Error(String(e))

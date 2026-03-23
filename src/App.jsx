@@ -136,12 +136,18 @@ function buildTelegramAlertMessage(item, conf) {
 }
 
 async function sendTelegramAlert(text) {
-  const res = await fetch('/api/telegram', {
+  const url = '/api/telegram'
+  console.log('[sendTelegramAlert] POST', url, 'text length:', text?.length ?? 0)
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ text }),
   })
-  const data = await res.json().catch(() => ({}))
+  const data = await res.json().catch((e) => {
+    console.error('[sendTelegramAlert] JSON parse error:', e)
+    return {}
+  })
+  console.log('[sendTelegramAlert] response', res.status, data)
   if (!res.ok) {
     const parts = [data.error, data.detail].filter(Boolean)
     throw new Error(parts.length > 0 ? parts.join('\n\n') : `Telegram HTTP ${res.status}`)
@@ -1456,10 +1462,13 @@ export default function App() {
       `⏰ ${time}`,
     ].join('\n')
     try {
+      console.log('[handleTestAlert] Envoi alerte test...')
       await sendTelegramAlert(text)
+      console.log('[handleTestAlert] OK')
       setTestAlertStatus('ok')
       setTimeout(() => setTestAlertStatus(null), 3000)
     } catch (err) {
+      console.error('[handleTestAlert] Erreur:', err)
       setTestAlertStatus(err instanceof Error ? err.message : 'Erreur')
       setTimeout(() => setTestAlertStatus(null), 4000)
     } finally {
