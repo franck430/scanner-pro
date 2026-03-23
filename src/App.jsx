@@ -2,11 +2,48 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 
 const POLL_MS = 30000
-const BINANCE_INTERVAL = '15m'
 const BINANCE_LIMIT = 100
 const SCORE_HISTORY_LEN = 24
 
 const FILTERS = ['Tous', 'Crypto', 'Forex', 'Indices', 'Matières']
+
+const TIMEFRAMES = [
+  {
+    id: '15m',
+    label: '15m',
+    binanceInterval: '15m',
+    tradingViewInterval: '15',
+    context: 'Scalping / Day trading',
+  },
+  {
+    id: '1H',
+    label: '1H',
+    binanceInterval: '1h',
+    tradingViewInterval: '60',
+    context: 'Day trading',
+  },
+  {
+    id: '4H',
+    label: '4H',
+    binanceInterval: '4h',
+    tradingViewInterval: '240',
+    context: 'Swing trading',
+  },
+  {
+    id: '1D',
+    label: '1D',
+    binanceInterval: '1d',
+    tradingViewInterval: 'D',
+    context: 'Position trading',
+  },
+  {
+    id: '1W',
+    label: '1W',
+    binanceInterval: '1w',
+    tradingViewInterval: 'W',
+    context: 'Trading long terme',
+  },
+]
 
 const WATCHLIST = [
   // Crypto
@@ -564,7 +601,7 @@ function computeIndicatorsAndTrade(candles) {
   }
 }
 
-function TradingViewAdvancedChart({ symbol }) {
+function TradingViewAdvancedChart({ symbol, tvInterval }) {
   const containerRef = useRef(null)
   const [loading, setLoading] = useState(true)
 
@@ -590,7 +627,7 @@ function TradingViewAdvancedChart({ symbol }) {
     script.innerHTML = JSON.stringify({
       autosize: true,
       symbol,
-      interval: '15',
+      interval: tvInterval,
       timezone: 'exchange',
       theme: 'dark',
       style: '1',
@@ -609,7 +646,7 @@ function TradingViewAdvancedChart({ symbol }) {
       window.clearTimeout(t0)
       window.clearTimeout(t)
     }
-  }, [symbol])
+  }, [symbol, tvInterval])
 
   return (
     <div
@@ -771,6 +808,12 @@ export default function App() {
   )
 
   const [selectedTvSymbol, setSelectedTvSymbol] = useState(WATCHLIST[0].tvSymbol)
+  const [selectedTimeframeId, setSelectedTimeframeId] = useState(TIMEFRAMES[0].id)
+  const selectedTimeframe = useMemo(
+    () => TIMEFRAMES.find((t) => t.id === selectedTimeframeId) ?? TIMEFRAMES[0],
+    [selectedTimeframeId],
+  )
+  const binanceInterval = selectedTimeframe.binanceInterval
 
   // Keep selected symbol valid when switching filters.
   useEffect(() => {
@@ -875,7 +918,7 @@ export default function App() {
       const tasks = cryptoItems.map(async (item) => {
         const candles = await fetchBinanceKlines(
           item.binanceSymbol,
-          BINANCE_INTERVAL,
+          binanceInterval,
           BINANCE_LIMIT,
         )
         // Need enough candles for EMA20/50 etc.
@@ -940,13 +983,21 @@ export default function App() {
     } finally {
       scanningRef.current = false
     }
-  }, [visibleItems])
+  }, [visibleItems, binanceInterval])
 
   useEffect(() => {
     scanNow()
     const id = window.setInterval(scanNow, POLL_MS)
     return () => window.clearInterval(id)
-  }, [visibleItems, scanNow])
+  }, [scanNow])
+
+  useEffect(() => {
+    // Reset history + simulation when switching timeframe.
+    setScoreHistory({})
+    setScorePulse({})
+    lastScoreRef.current = {}
+    simStateRef.current = {}
+  }, [selectedTimeframeId])
 
   const selectedResult = scanResults[selectedTvSymbol]
   const selectedComputed = selectedResult && selectedResult.score != null ? selectedResult : null
@@ -960,7 +1011,7 @@ export default function App() {
             <span className="brand-accent">™</span>
           </div>
           <div className="brand-subtitle">
-            TradingView chart (15m) + EMA/RSI/MACD/BB (scores 0-100)
+            TradingView chart + EMA/RSI/MACD/BB (scores 0-100) selon timeframe
           </div>
         </div>
 
@@ -1036,11 +1087,30 @@ export default function App() {
               <div className="panel-title">Chart temps reel</div>
               <div className="panel-subtitle">{selectedItem.label} (TradingView)</div>
             </div>
-            <div className="panel-badge mono">15m</div>
+            <div className="panel-badge mono">{selectedTimeframeId}</div>
+          </div>
+
+          <div className="timeframe-block">
+            <div className="timeframe-buttons" role="tablist" aria-label="Timeframe">
+              {TIMEFRAMES.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  className={`timeframe-btn ${selectedTimeframeId === t.id ? 'is-active' : ''}`}
+                  onClick={() => setSelectedTimeframeId(t.id)}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <div className="timeframe-context">{selectedTimeframe.context}</div>
           </div>
 
           <div className="tv-shell">
-            <TradingViewAdvancedChart symbol={selectedTvSymbol} />
+            <TradingViewAdvancedChart
+              symbol={selectedTvSymbol}
+              tvInterval={selectedTimeframe.tradingViewInterval}
+            />
           </div>
         </section>
 
@@ -1051,7 +1121,7 @@ export default function App() {
       </main>
 
       <footer className="scanner-footer">
-        Cryptos: Binance klines ({BINANCE_INTERVAL}, {BINANCE_LIMIT}). Forex/Indices: scores simulés. Chart: TradingView (15m).
+        Cryptos: Binance klines ({binanceInterval}, {BINANCE_LIMIT}). Forex/Indices: scores simulés. Chart: TradingView ({selectedTimeframe.tradingViewInterval}).
       </footer>
     </div>
   )

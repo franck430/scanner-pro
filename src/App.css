@@ -531,6 +531,47 @@
   transition: opacity 200ms ease;
 }
 
+.timeframe-block {
+  margin-bottom: 12px;
+}
+
+.timeframe-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.timeframe-btn {
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(2, 6, 23, 0.25);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  color: rgba(229, 231, 235, 0.80);
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.timeframe-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(0, 229, 160, 0.4);
+}
+
+.timeframe-btn.is-active {
+  border-color: rgba(0, 229, 160, 0.9);
+  background: rgba(0, 229, 160, 0.12);
+  color: rgba(229, 231, 235, 0.98);
+}
+
+.timeframe-context {
+  font-size: 12px;
+  color: rgba(229, 231, 235, 0.72);
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 700;
+}
+
 .score-grid {
   display: grid;
   grid-template-columns: 1fr;
@@ -695,6 +736,15 @@
 
   .watchlist-right {
     gap: 8px;
+  }
+
+  .timeframe-block {
+    margin-bottom: 10px;
+  }
+
+  .timeframe-btn {
+    padding: 10px 12px;
+    font-size: 13px;
   }
 }
 
