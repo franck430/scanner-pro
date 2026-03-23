@@ -1104,7 +1104,7 @@ function TradingViewAdvancedChart({ symbol, tvInterval }) {
   )
 }
 
-function SignalIdealPanel({ item, result }) {
+function SignalIdealPanel({ item, result, contextIndicators, contextTfLabel, contextLoading }) {
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState('')
   const [aiText, setAiText] = useState('')
@@ -1126,7 +1126,8 @@ function SignalIdealPanel({ item, result }) {
     )
   }
 
-  const { trade, indicators } = conf
+  const { trade } = conf
+  const indicators = contextIndicators ?? conf.indicators
   const signalClass =
     conf.signalTone === 'good'
       ? 'direction-pill--long'
@@ -1311,7 +1312,10 @@ Maximum 5 lignes.`
       </div>
 
       <div className="signals">
-        <div className="signals-title">Contexte 15m</div>
+        <div className="signals-title">
+          Contexte {contextTfLabel ?? '15m'}
+          {contextLoading ? ' (chargement…)' : ''}
+        </div>
         <div className="signals-row">
           <div className={`signal-chip ${indicators.rsi >= 50 ? 'is-green' : 'is-red'}`}>
             RSI {Number.isFinite(indicators.rsi) ? indicators.rsi.toFixed(1) : '—'}
@@ -1393,7 +1397,10 @@ export default function App() {
         const { computed } = simulateComputedForItem(item, null)
         mtfMap[tf.key] = computed
       }
-      initial[item.tvSymbol] = { confluence: buildConfluenceResult(mtfMap) }
+      initial[item.tvSymbol] = {
+        confluence: buildConfluenceResult(mtfMap),
+        mtfData: mtfMap,
+      }
     }
     return initial
   })
@@ -1513,7 +1520,7 @@ export default function App() {
 
         const confluence = buildConfluenceResult(mtfMap)
         simStateRef.current[item.tvSymbol] = nextGroup
-        simUpdates[item.tvSymbol] = { confluence }
+        simUpdates[item.tvSymbol] = { confluence, mtfData: mtfMap }
 
         const nextScore = confluence?.score
         if (typeof nextScore === 'number') {
@@ -1584,7 +1591,7 @@ export default function App() {
 
         const confluence = buildConfluenceResult(mtfMap)
         if (!confluence) throw new Error('Confluence unavailable')
-        return { tvSymbol: item.tvSymbol, confluence }
+        return { tvSymbol: item.tvSymbol, confluence, mtfData: mtfMap }
       })
 
       const settled = await Promise.allSettled(tasks)
@@ -1594,8 +1601,8 @@ export default function App() {
 
       for (const s of settled) {
         if (s.status !== 'fulfilled') continue
-        const { tvSymbol, confluence } = s.value
-        finalUpdates[tvSymbol] = { confluence }
+        const { tvSymbol, confluence, mtfData } = s.value
+        finalUpdates[tvSymbol] = { confluence, mtfData }
 
         const nextScore = confluence?.score
         if (typeof nextScore === 'number') {
@@ -1697,6 +1704,77 @@ export default function App() {
 
   const selectedResult = scanResults[selectedTvSymbol]
   const selectedComputed = selectedResult && selectedResult.confluence ? selectedResult : null
+
+  const [contextIndicators, setContextIndicators] = useState(null)
+  const [contextTfLabel, setContextTfLabel] = useState(selectedTimeframe?.label ?? '15m')
+  const [contextLoading, setContextLoading] = useState(false)
+
+  useEffect(() => {
+    const tf = TIMEFRAMES.find((t) => t.id === selectedTimeframeId) ?? TIMEFRAMES[2]
+    const mtfKey = ['1D', '4H', '15m'].includes(selectedTimeframeId) ? selectedTimeframeId : null
+    const result = scanResults[selectedTvSymbol]
+    const mtfData = result?.mtfData
+
+    if (mtfKey && mtfData?.[mtfKey]?.indicators) {
+      setContextTfLabel(tf.label)
+      setContextIndicators(mtfData[mtfKey].indicators)
+      setContextLoading(false)
+      return
+    }
+
+    if (!result?.confluence?.indicators) {
+      setContextIndicators(null)
+      setContextTfLabel(tf.label)
+      setContextLoading(false)
+      return
+    }
+
+    const item = WATCHLIST.find((x) => x.tvSymbol === selectedTvSymbol)
+    if (!item?.binanceSymbol && !item?.twelveSymbol) {
+      const fallback = selectedTimeframeId === '1m' || selectedTimeframeId === '5m' ? '15m' : selectedTimeframeId === '1H' ? '4H' : '1D'
+      setContextIndicators(mtfData?.[fallback]?.indicators ?? result.confluence.indicators)
+      setContextTfLabel(tf.label)
+      setContextLoading(false)
+      return
+    }
+
+    setContextLoading(true)
+    setContextTfLabel(tf.label)
+
+    let cancelled = false
+    ;(async () => {
+      try {
+        let candles = []
+        if (item.binanceSymbol) {
+          candles = await fetchBinanceKlines(item.binanceSymbol, tf.binanceInterval, BINANCE_LIMIT)
+        } else if (item.twelveSymbol && TWELVE_DATA_KEY) {
+          candles = await fetchTwelveDataCandles(
+            item.twelveSymbol,
+            tf.twelveInterval,
+            TWELVE_DATA_LIMIT,
+            TWELVE_DATA_KEY,
+          )
+        }
+
+        if (cancelled) return
+        if (candles.length >= 80) {
+          const computed = computeIndicatorsAndTrade(candles)
+          if (computed) setContextIndicators(computed.indicators)
+        } else {
+          const fallback = selectedTimeframeId === '1m' || selectedTimeframeId === '5m' ? '15m' : selectedTimeframeId === '1H' ? '4H' : '1D'
+          setContextIndicators(mtfData?.[fallback]?.indicators ?? result.confluence.indicators)
+        }
+      } catch {
+        if (cancelled) return
+        const fallback = selectedTimeframeId === '1m' || selectedTimeframeId === '5m' ? '15m' : selectedTimeframeId === '1H' ? '4H' : '1D'
+        setContextIndicators(mtfData?.[fallback]?.indicators ?? result.confluence.indicators)
+      } finally {
+        if (!cancelled) setContextLoading(false)
+      }
+    })()
+
+    return () => { cancelled = true }
+  }, [selectedTvSymbol, selectedTimeframeId, scanResults])
 
   return (
     <div className={`scanner-app ${chartFullscreen ? 'is-fullscreen' : ''}`}>
@@ -1857,7 +1935,13 @@ export default function App() {
 
         <aside className={`panel panel-right ${chartFullscreen ? 'is-hidden' : ''}`}>
           <div className="panel-title">Signal ideal</div>
-          <SignalIdealPanel item={selectedItem} result={selectedComputed} />
+          <SignalIdealPanel
+            item={selectedItem}
+            result={selectedComputed}
+            contextIndicators={contextIndicators}
+            contextTfLabel={contextTfLabel}
+            contextLoading={contextLoading}
+          />
         </aside>
       </main>
 
