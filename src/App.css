@@ -245,6 +245,29 @@
   background: rgba(0, 229, 160, 0.2);
 }
 
+.telegram-test-btn {
+  padding: 8px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 229, 160, 0.3);
+  background: rgba(0, 229, 160, 0.08);
+  color: rgba(229, 231, 235, 0.95);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: 'Space Mono', ui-monospace, monospace;
+  transition: border-color 0.2s ease, background 0.2s ease, opacity 0.2s ease;
+}
+
+.telegram-test-btn:hover:not(:disabled) {
+  border-color: rgba(0, 229, 160, 0.5);
+  background: rgba(0, 229, 160, 0.14);
+}
+
+.telegram-test-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 .hamburger-btn {
   display: none;
   width: 42px;

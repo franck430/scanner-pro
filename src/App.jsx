@@ -1190,6 +1190,8 @@ export default function App() {
   const [scoreHistory, setScoreHistory] = useState({})
   const [scorePulse, setScorePulse] = useState({})
   const [mobileWatchlistOpen, setMobileWatchlistOpen] = useState(false)
+  const [testAlertLoading, setTestAlertLoading] = useState(false)
+  const [testAlertStatus, setTestAlertStatus] = useState(null)
   const [telegramAlertsEnabled, setTelegramAlertsEnabled] = useState(() => {
     try {
       return localStorage.getItem(LS_TELEGRAM_ALERTS) === '1'
@@ -1435,6 +1437,36 @@ export default function App() {
     }
   }, [evaluateTelegramAlerts])
 
+  const handleTestAlert = useCallback(async () => {
+    setTestAlertStatus(null)
+    setTestAlertLoading(true)
+    const time = new Date().toLocaleString('fr-FR', {
+      dateStyle: 'short',
+      timeStyle: 'medium',
+    })
+    const text = [
+      '🧪 TEST ALERTE - Scanner Pro',
+      `📊 Score : 85/100`,
+      `📈 Direction : LONG`,
+      `⏱ Confluence : 6/7 critères`,
+      `💰 Entrée : 65 000`,
+      `🛑 Stop Loss : 63 200`,
+      `🎯 Take Profit : 72 000`,
+      `⚖️ R/R : 2.85`,
+      `⏰ ${time}`,
+    ].join('\n')
+    try {
+      await sendTelegramAlert(text)
+      setTestAlertStatus('ok')
+      setTimeout(() => setTestAlertStatus(null), 3000)
+    } catch (err) {
+      setTestAlertStatus(err instanceof Error ? err.message : 'Erreur')
+      setTimeout(() => setTestAlertStatus(null), 4000)
+    } finally {
+      setTestAlertLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     scanNow()
     const id = window.setInterval(scanNow, POLL_MS)
@@ -1479,6 +1511,26 @@ export default function App() {
             aria-label="Activer ou désactiver les alertes Telegram"
           >
             {telegramAlertsEnabled ? '🔔' : '🔕'}
+          </button>
+          <button
+            type="button"
+            className="telegram-test-btn"
+            onClick={handleTestAlert}
+            disabled={testAlertLoading}
+            title={
+              testAlertStatus && testAlertStatus !== 'ok'
+                ? testAlertStatus
+                : 'Envoyer une alerte de test sur Telegram'
+            }
+            aria-label="Tester l’envoi d’une alerte Telegram"
+          >
+            {testAlertLoading
+              ? 'Envoi…'
+              : testAlertStatus === 'ok'
+                ? '✅ Envoyé'
+                : testAlertStatus
+                  ? '❌'
+                  : '🧪 Test Alerte'}
           </button>
           <button
             type="button"
