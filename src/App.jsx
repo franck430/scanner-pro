@@ -155,15 +155,9 @@ async function sendTelegramAlert(text) {
   }
 }
 
-function scoreToTrend(score) {
-  if (score > 65) return { arrow: '↑', className: 'trend-up' }
-  if (score >= 40) return { arrow: '→', className: 'trend-mid' }
-  return { arrow: '↓', className: 'trend-down' }
-}
-
 function Sparkline({ values, tone }) {
-  const w = 64
-  const h = 18
+  const w = 100
+  const h = 14
   if (!Array.isArray(values) || values.length < 2) return null
 
   const min = Math.min(...values)
@@ -182,8 +176,8 @@ function Sparkline({ values, tone }) {
     tone === 'good' ? 'rgba(0,229,160,0.95)' : tone === 'bad' ? 'rgba(255,61,90,0.95)' : 'rgba(255,176,32,0.95)'
 
   return (
-    <svg className="sparkline" width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
-      <polyline points={pts} fill="none" stroke={stroke} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+    <svg className="sparkline sparkline-full" width="100%" height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true">
+      <polyline points={pts} fill="none" stroke={stroke} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   )
 }
@@ -226,7 +220,6 @@ function WatchlistPanel({
           const mtfScores = result?.confluence?.mtfScores
 
           const badgeClass = score == null ? 'badge--neutral' : scoreToBadgeClass(score)
-          const trend = typeof score === 'number' ? scoreToTrend(score) : { arrow: '→', className: 'trend-mid' }
           const values = (scoreHistory[item.tvSymbol] && scoreHistory[item.tvSymbol].length >= 2)
             ? scoreHistory[item.tvSymbol]
             : typeof score === 'number'
@@ -242,22 +235,20 @@ function WatchlistPanel({
               className={`watchlist-item ${isActive ? 'is-active' : ''}`}
               onClick={() => onPickSymbol(item.tvSymbol)}
             >
-              <span className="watchlist-left">
+              <div className="watchlist-item-top">
                 <span className="watchlist-label">{item.label}</span>
-                <span className="mtf-line">
-                  {mtfScores
-                    ? `1D:${mtfScores['1D']} | 4H:${mtfScores['4H']} | 15m:${mtfScores['15m']}`
-                    : '1D:— | 4H:— | 15m:—'}
-                </span>
-              </span>
-
-              <span className="watchlist-right">
-                <span className={`trend-arrow ${trend.className}`}>{trend.arrow}</span>
-                <Sparkline values={values} tone={tone} />
                 <span className={`score-badge ${badgeClass} ${scorePulse[item.tvSymbol] ? 'score-badge--pulse' : ''}`}>
                   {score == null ? '—' : score}
                 </span>
+              </div>
+              <span className="mtf-line">
+                {mtfScores
+                  ? `1D:${mtfScores['1D']} 4H:${mtfScores['4H']} 15m:${mtfScores['15m']}`
+                  : '1D:— 4H:— 15m:—'}
               </span>
+              <div className="watchlist-sparkline-wrap">
+                <Sparkline values={values} tone={tone} />
+              </div>
             </button>
           )
         })}
@@ -1047,11 +1038,13 @@ Maximum 5 lignes.`
 
   return (
     <div className="trade-panel">
-      <div className="trade-top">
-        <div className={`direction-pill direction-pill--big ${signalClass}`}>
+      <div className="trade-hero">
+        <div className={`direction-pill direction-pill--hero ${signalClass}`}>
           {conf.signalBadge}
         </div>
-        <div className={`score-badge score-badge--big ${scoreToBadgeClass(conf.score)}`}>{conf.score}</div>
+        <div className={`score-circle ${scoreToBadgeClass(conf.score)}`}>
+          <span className="score-circle-value">{conf.score}</span>
+        </div>
       </div>
 
       <div className="panel-help">{conf.label}</div>
@@ -1225,6 +1218,7 @@ export default function App() {
   const [scoreHistory, setScoreHistory] = useState({})
   const [scorePulse, setScorePulse] = useState({})
   const [mobileWatchlistOpen, setMobileWatchlistOpen] = useState(false)
+  const [chartFullscreen, setChartFullscreen] = useState(false)
   const [testAlertLoading, setTestAlertLoading] = useState(false)
   const [testAlertStatus, setTestAlertStatus] = useState(null)
   const [telegramAlertsEnabled, setTelegramAlertsEnabled] = useState(() => {
@@ -1523,7 +1517,7 @@ export default function App() {
   const selectedComputed = selectedResult && selectedResult.confluence ? selectedResult : null
 
   return (
-    <div className="scanner-app">
+    <div className={`scanner-app ${chartFullscreen ? 'is-fullscreen' : ''}`}>
       <header className="scanner-header">
         <div className="brand">
           <div className="brand-title">
@@ -1587,7 +1581,7 @@ export default function App() {
       </header>
 
       <main className="scanner-grid">
-        <aside className="panel panel-left desktop-only">
+        <aside className={`panel panel-left desktop-only ${chartFullscreen ? 'is-hidden' : ''}`}>
           <WatchlistPanel
             visibleItems={visibleItems}
             selectedTvSymbol={selectedTvSymbol}
@@ -1635,16 +1629,27 @@ export default function App() {
           </div>
         </div>
 
-        <section className="panel panel-center">
+        <section className={`panel panel-center ${chartFullscreen ? 'is-fullscreen' : ''}`}>
           <div className="panel-header">
             <div>
               <div className="panel-title">Chart temps reel</div>
               <div className="panel-subtitle">{selectedItem.label} (TradingView)</div>
             </div>
-            <div className="panel-badge mono">{selectedTimeframeId}</div>
+            <div className="panel-header-right">
+              <div className="panel-badge mono">{selectedTimeframeId}</div>
+              <button
+                type="button"
+                className="fullscreen-btn"
+                onClick={() => setChartFullscreen((v) => !v)}
+                title={chartFullscreen ? 'Quitter le plein écran' : 'Plein écran'}
+                aria-label={chartFullscreen ? 'Quitter le plein écran' : 'Plein écran'}
+              >
+                {chartFullscreen ? '⊡ Réduire' : '⛶ Plein écran'}
+              </button>
+            </div>
           </div>
 
-          <div className="timeframe-block">
+          <div className={`timeframe-block ${chartFullscreen ? 'is-hidden' : ''}`}>
             <div className="timeframe-buttons" role="tablist" aria-label="Timeframe">
               {TIMEFRAMES.map((t) => (
                 <button
@@ -1668,7 +1673,7 @@ export default function App() {
           </div>
         </section>
 
-        <aside className="panel panel-right">
+        <aside className={`panel panel-right ${chartFullscreen ? 'is-hidden' : ''}`}>
           <div className="panel-title">Signal ideal</div>
           <SignalIdealPanel item={selectedItem} result={selectedComputed} />
         </aside>
