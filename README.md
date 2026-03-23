@@ -4,6 +4,7 @@
 
 - `VITE_TWELVE_DATA_KEY` — Twelve Data (navigateur)
 - `ANTHROPIC_KEY` — **sans** préfixe `VITE_` : utilisée uniquement par la fonction serverless `api/claude.js` (proxy vers Anthropic, pas d’exposition au client)
+- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` — **sans** `VITE_` : utilisées par `api/telegram.js` pour les alertes (token du bot + id du chat)
 
 Copier `.env.example` vers `.env` et renseigner les clés.
 
@@ -11,7 +12,11 @@ Copier `.env.example` vers `.env` et renseigner les clés.
 
 L’appel IA passe par `/api/claude`. Avec Vite seul, ce chemin est proxifié vers `http://127.0.0.1:3000` : lance **`vercel dev`** dans un terminal (port 3000 par défaut), puis **`npm run dev`** dans un autre, ou utilise uniquement `vercel dev` si tout est servi par Vercel.
 
-Sur **Vercel** en production, ajoute `ANTHROPIC_KEY` dans les variables du projet.
+Sur **Vercel** en production, ajoute `ANTHROPIC_KEY`, `TELEGRAM_BOT_TOKEN` et `TELEGRAM_CHAT_ID` dans les variables du projet.
+
+## Alertes Telegram
+
+Active les alertes avec le bouton **🔔** dans le header. Un message part lorsque la confluence globale **> 75**, qu’au moins **2 timeframes** (1D / 4H / 15m) ont un score **> 75**, et qu’au moins une bougie **réelle** a été mise à jour ce scan — pas deux fois le même actif en **30 minutes** (stocké en `localStorage`).
 
 ---
 

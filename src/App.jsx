@@ -8,6 +8,10 @@ const SCORE_HISTORY_LEN = 24
 const TWELVE_DATA_KEY = import.meta.env.VITE_TWELVE_DATA_KEY
 const CLAUDE_MODEL = 'claude-haiku-4-5-20251001'
 
+const TELEGRAM_COOLDOWN_MS = 30 * 60 * 1000
+const LS_TELEGRAM_ALERTS = 'scanner-pro-telegram-alerts'
+const LS_TELEGRAM_LAST = 'scanner-pro-telegram-last-alert'
+
 const FILTERS = ['Tous', 'Crypto', 'Forex', 'Indices', 'Matières', '🔥 Signaux forts']
 const STRONG_SIGNAL_FILTER = '🔥 Signaux forts'
 
@@ -95,6 +99,53 @@ const SIM_PROFILE_BY_CATEGORY = {
   Forex: { entryVolPct: 0.0006, atrPct: 0.0012, emaDiffPct: 0.0025 },
   Indices: { entryVolPct: 0.0035, atrPct: 0.008, emaDiffPct: 0.010 },
   'Matières': { entryVolPct: 0.0025, atrPct: 0.006, emaDiffPct: 0.009 },
+}
+
+function countMtfScoresAbove75(mtfScores) {
+  if (!mtfScores) return 0
+  return ['1D', '4H', '15m'].filter((k) => {
+    const s = mtfScores[k]
+    return typeof s === 'number' && s > 75
+  }).length
+}
+
+function buildTelegramAlertMessage(item, conf) {
+  const trade = conf.trade
+  const fmt = (n) => {
+    const v = Number(n)
+    if (!Number.isFinite(v)) return '—'
+    return v.toLocaleString(undefined, { maximumFractionDigits: item.decimals })
+  }
+  const dir =
+    conf.recommendation === 'LONG' || conf.recommendation === 'SHORT'
+      ? conf.recommendation
+      : trade?.direction ?? '—'
+  const rr = Number.isFinite(trade?.rr) ? trade.rr.toFixed(2) : '—'
+  const time = new Date().toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'medium' })
+  return [
+    `🚨 SIGNAL FORT - ${item.label}`,
+    `📊 Score : ${conf.score}/100`,
+    `📈 Direction : ${dir}`,
+    `⏱ Confluence : ${conf.checksPassed}/${conf.checksTotal} critères`,
+    `💰 Entrée : ${fmt(trade?.entry)}`,
+    `🛑 Stop Loss : ${fmt(trade?.stopLoss)}`,
+    `🎯 Take Profit : ${fmt(trade?.takeProfit)}`,
+    `⚖️ R/R : ${rr}`,
+    `⏰ ${time}`,
+  ].join('\n')
+}
+
+async function sendTelegramAlert(text) {
+  const res = await fetch('/api/telegram', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const parts = [data.error, data.detail].filter(Boolean)
+    throw new Error(parts.length > 0 ? parts.join('\n\n') : `Telegram HTTP ${res.status}`)
+  }
 }
 
 function scoreToTrend(score) {
@@ -1139,9 +1190,67 @@ export default function App() {
   const [scoreHistory, setScoreHistory] = useState({})
   const [scorePulse, setScorePulse] = useState({})
   const [mobileWatchlistOpen, setMobileWatchlistOpen] = useState(false)
+  const [telegramAlertsEnabled, setTelegramAlertsEnabled] = useState(() => {
+    try {
+      return localStorage.getItem(LS_TELEGRAM_ALERTS) === '1'
+    } catch {
+      return false
+    }
+  })
+  const telegramAlertsEnabledRef = useRef(false)
+  const telegramLastSentRef = useRef({})
   const lastScoreRef = useRef({})
   const scanningRef = useRef(false)
   const simStateRef = useRef({})
+
+  useEffect(() => {
+    telegramAlertsEnabledRef.current = telegramAlertsEnabled
+  }, [telegramAlertsEnabled])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_TELEGRAM_ALERTS, telegramAlertsEnabled ? '1' : '0')
+    } catch {
+      /* ignore */
+    }
+  }, [telegramAlertsEnabled])
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LS_TELEGRAM_LAST)
+      if (raw) telegramLastSentRef.current = JSON.parse(raw)
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  const evaluateTelegramAlerts = useCallback(async (scanResultsMap) => {
+    if (!telegramAlertsEnabledRef.current) return
+    for (const item of WATCHLIST) {
+      const conf = scanResultsMap[item.tvSymbol]?.confluence
+      if (!conf) continue
+      if (typeof conf.score !== 'number' || conf.score <= 75) continue
+      if (countMtfScoresAbove75(conf.mtfScores) < 2) continue
+      const last = telegramLastSentRef.current[item.tvSymbol] ?? 0
+      if (Date.now() - last < TELEGRAM_COOLDOWN_MS) continue
+      try {
+        const text = buildTelegramAlertMessage(item, conf)
+        await sendTelegramAlert(text)
+        const ts = Date.now()
+        telegramLastSentRef.current = {
+          ...telegramLastSentRef.current,
+          [item.tvSymbol]: ts,
+        }
+        try {
+          localStorage.setItem(LS_TELEGRAM_LAST, JSON.stringify(telegramLastSentRef.current))
+        } catch {
+          /* ignore */
+        }
+      } catch (e) {
+        console.error('[Telegram]', item.tvSymbol, e)
+      }
+    }
+  }, [])
 
   const visibleItems = useMemo(() => {
     if (filter !== STRONG_SIGNAL_FILTER) return categoryItems
@@ -1309,13 +1418,22 @@ export default function App() {
         }
       }
 
-      setScanResults((prev) => ({ ...prev, ...finalUpdates }))
+      setScanResults((prev) => {
+        const next = { ...prev, ...finalUpdates }
+        if (
+          telegramAlertsEnabledRef.current &&
+          Object.keys(finalUpdates).length > 0
+        ) {
+          void evaluateTelegramAlerts(next)
+        }
+        return next
+      })
     } catch (err) {
       console.error(err)
     } finally {
       scanningRef.current = false
     }
-  }, [])
+  }, [evaluateTelegramAlerts])
 
   useEffect(() => {
     scanNow()
@@ -1348,6 +1466,20 @@ export default function App() {
         </div>
 
         <div className="header-right">
+          <button
+            type="button"
+            className={`telegram-toggle ${telegramAlertsEnabled ? 'is-on' : ''}`}
+            onClick={() => setTelegramAlertsEnabled((v) => !v)}
+            title={
+              telegramAlertsEnabled
+                ? 'Alertes Telegram activées (clic pour désactiver)'
+                : 'Alertes Telegram désactivées (clic pour activer)'
+            }
+            aria-pressed={telegramAlertsEnabled}
+            aria-label="Activer ou désactiver les alertes Telegram"
+          >
+            {telegramAlertsEnabled ? '🔔' : '🔕'}
+          </button>
           <button
             type="button"
             className="hamburger-btn mobile-only"
