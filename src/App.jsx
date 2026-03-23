@@ -4,6 +4,7 @@ import './App.css'
 const POLL_MS = 30000
 const BINANCE_INTERVAL = '15m'
 const BINANCE_LIMIT = 100
+const SCORE_HISTORY_LEN = 24
 
 const FILTERS = ['Tous', 'Crypto', 'Forex', 'Indices', 'Matières']
 
@@ -18,6 +19,14 @@ const WATCHLIST = [
   // Forex
   { label: 'EUR/USD', category: 'Forex', tvSymbol: 'FX:EURUSD', decimals: 5, simBasePrice: 1.08 },
   { label: 'GBP/USD', category: 'Forex', tvSymbol: 'FX:GBPUSD', decimals: 5, simBasePrice: 1.28 },
+  { label: 'USD/JPY', category: 'Forex', tvSymbol: 'FX:USDJPY', decimals: 3, simBasePrice: 148 },
+  { label: 'AUD/USD', category: 'Forex', tvSymbol: 'FX:AUDUSD', decimals: 5, simBasePrice: 0.66 },
+  { label: 'USD/CHF', category: 'Forex', tvSymbol: 'FX:USDCHF', decimals: 5, simBasePrice: 0.91 },
+  { label: 'NZD/USD', category: 'Forex', tvSymbol: 'FX:NZDUSD', decimals: 5, simBasePrice: 0.61 },
+  { label: 'USD/CAD', category: 'Forex', tvSymbol: 'FX:USDCAD', decimals: 5, simBasePrice: 1.35 },
+  { label: 'EUR/GBP', category: 'Forex', tvSymbol: 'FX:EURGBP', decimals: 5, simBasePrice: 0.86 },
+  { label: 'EUR/JPY', category: 'Forex', tvSymbol: 'FX:EURJPY', decimals: 3, simBasePrice: 165 },
+  { label: 'GBP/JPY', category: 'Forex', tvSymbol: 'FX:GBPJPY', decimals: 3, simBasePrice: 192 },
 
   // Indices
   { label: 'NAS100', category: 'Indices', tvSymbol: 'TVC:NDX', decimals: 2, simBasePrice: 18000 },
@@ -26,6 +35,7 @@ const WATCHLIST = [
   // Matières
   { label: 'XAU/USD', category: 'Matières', tvSymbol: 'OANDA:XAUUSD', decimals: 2, simBasePrice: 2200 },
   { label: 'XAG/USD', category: 'Matières', tvSymbol: 'OANDA:XAGUSD', decimals: 2, simBasePrice: 26 },
+  { label: 'WTI/USD', category: 'Matières', tvSymbol: 'TVC:USOIL', decimals: 2, simBasePrice: 75 },
 ]
 
 const SIM_PROFILE_BY_CATEGORY = {
@@ -33,6 +43,108 @@ const SIM_PROFILE_BY_CATEGORY = {
   Forex: { entryVolPct: 0.0006, atrPct: 0.0012, emaDiffPct: 0.0025 },
   Indices: { entryVolPct: 0.0035, atrPct: 0.008, emaDiffPct: 0.010 },
   'Matières': { entryVolPct: 0.0025, atrPct: 0.006, emaDiffPct: 0.009 },
+}
+
+function scoreToTrend(score) {
+  if (score > 65) return { arrow: '↑', className: 'trend-up' }
+  if (score >= 40) return { arrow: '→', className: 'trend-mid' }
+  return { arrow: '↓', className: 'trend-down' }
+}
+
+function Sparkline({ values, tone }) {
+  const w = 64
+  const h = 18
+  if (!Array.isArray(values) || values.length < 2) return null
+
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const span = max - min || 1
+
+  const pts = values
+    .map((v, i) => {
+      const x = (i / (values.length - 1)) * w
+      const y = h - ((v - min) / span) * h
+      return `${x.toFixed(2)},${y.toFixed(2)}`
+    })
+    .join(' ')
+
+  const stroke =
+    tone === 'good' ? 'rgba(0,229,160,0.95)' : tone === 'bad' ? 'rgba(255,61,90,0.95)' : 'rgba(255,176,32,0.95)'
+
+  return (
+    <svg className="sparkline" width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
+      <polyline points={pts} fill="none" stroke={stroke} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function WatchlistPanel({
+  visibleItems,
+  selectedTvSymbol,
+  scanResults,
+  filter,
+  setFilter,
+  onPickSymbol,
+  scoreHistory,
+  scorePulse,
+}) {
+  return (
+    <>
+      <div className="panel-title">Watchlist</div>
+
+      <div className="filter-bar" role="tablist" aria-label="Filter watchlist">
+        {FILTERS.map((f) => (
+          <button
+            key={f}
+            type="button"
+            className={`filter-btn ${filter === f ? 'is-active' : ''}`}
+            onClick={() => setFilter(f)}
+          >
+            {f}
+          </button>
+        ))}
+      </div>
+
+      <div className="watchlist">
+        {visibleItems.map((item) => {
+          const isActive = item.tvSymbol === selectedTvSymbol
+          const result = scanResults[item.tvSymbol]
+          const score = result && typeof result.score === 'number' ? result.score : null
+
+          const badgeClass = score == null ? 'badge--neutral' : scoreToBadgeClass(score)
+          const trend = typeof score === 'number' ? scoreToTrend(score) : { arrow: '→', className: 'trend-mid' }
+          const values = (scoreHistory[item.tvSymbol] && scoreHistory[item.tvSymbol].length >= 2)
+            ? scoreHistory[item.tvSymbol]
+            : typeof score === 'number'
+              ? [score, score]
+              : [50, 50]
+
+          const tone = score == null ? 'mid' : score > 65 ? 'good' : score < 40 ? 'bad' : 'mid'
+
+          return (
+            <button
+              key={item.tvSymbol}
+              type="button"
+              className={`watchlist-item ${isActive ? 'is-active' : ''}`}
+              onClick={() => onPickSymbol(item.tvSymbol)}
+            >
+              <span className="watchlist-label">{item.label}</span>
+
+              <span className="watchlist-right">
+                <span className={`trend-arrow ${trend.className}`}>{trend.arrow}</span>
+                <Sparkline values={values} tone={tone} />
+                <span className={`score-badge ${badgeClass} ${scorePulse[item.tvSymbol] ? 'score-badge--pulse' : ''}`}>
+                  {score == null ? '—' : score}
+                </span>
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
+      <div className="panel-help">Scores recalcules toutes les {Math.round(POLL_MS / 1000)}s.</div>
+    </>
+  )
 }
 
 function clamp(n, min, max) {
@@ -183,6 +295,46 @@ function computeATR(candles, period = 14) {
   return atr
 }
 
+function findLastSwingHigh(candles, pivot = 5) {
+  const n = candles.length
+  if (n < pivot * 2 + 3) return null
+
+  let last = null
+  for (let i = pivot; i <= n - pivot - 2; i++) {
+    const left = candles.slice(i - pivot, i + 1)
+    const right = candles.slice(i, i + pivot + 1)
+    const window = left.length === pivot + 1 ? left.concat(right.slice(1)) : null
+    if (!window || window.length !== pivot * 2 + 1) continue
+
+    const maxHigh = window.reduce((acc, c) => Math.max(acc, c.high), -Infinity)
+    const high = candles[i].high
+
+    if (high >= maxHigh) last = high
+  }
+
+  return last
+}
+
+function findLastSwingLow(candles, pivot = 5) {
+  const n = candles.length
+  if (n < pivot * 2 + 3) return null
+
+  let last = null
+  for (let i = pivot; i <= n - pivot - 2; i++) {
+    const left = candles.slice(i - pivot, i + 1)
+    const right = candles.slice(i, i + pivot + 1)
+    const window = left.length === pivot + 1 ? left.concat(right.slice(1)) : null
+    if (!window || window.length !== pivot * 2 + 1) continue
+
+    const minLow = window.reduce((acc, c) => Math.min(acc, c.low), Infinity)
+    const low = candles[i].low
+
+    if (low <= minLow) last = low
+  }
+
+  return last
+}
+
 function scoreToBadgeClass(score) {
   if (score > 65) return 'badge--good'
   if (score >= 40) return 'badge--mid'
@@ -247,9 +399,16 @@ function simulateComputedForItem(item, prevSim) {
     width: bbWidth,
   }
 
-  const stopLoss = isLong ? entry - atr * 1.5 : entry + atr * 1.5
-  const takeProfit = isLong ? entry + atr * 4 : entry - atr * 4
-  const rr = Math.abs(takeProfit - entry) / Math.abs(entry - stopLoss)
+  // RR dynamique (entre 1.50 et 5.00) pour éviter le RR fixe 2.67.
+  const rr = clamp(
+    1.5 + Math.abs(scoreCentered) * 3.5 + (Math.random() - 0.5) * 0.9,
+    1.5,
+    5.0,
+  )
+
+  const riskDist = atr * (0.9 + Math.random() * 0.9) // "proche" de la volatilité
+  const stopLoss = isLong ? entry - riskDist : entry + riskDist
+  const takeProfit = isLong ? entry + riskDist * rr : entry - riskDist * rr
 
   const emaBull = ema20 > ema50
   const rsiActive = isLong ? rsi >= 55 : rsi <= 45
@@ -328,10 +487,49 @@ function computeIndicatorsAndTrade(candles) {
 
   const isLong = direction === 'LONG'
 
-  // Trade levels based on ATR multipliers.
-  const stopLoss = isLong ? entry - atr * 1.5 : entry + atr * 1.5
-  const takeProfit = isLong ? entry + atr * 4 : entry - atr * 4
-  const rr = Math.abs(takeProfit - entry) / Math.abs(entry - stopLoss)
+  // --- Dynamic Risk/Reward ---
+  // 1) SL via support/résistance récents (min low / max high)
+  // 2) TP via dernier swing high/low
+  // 3) RR contraint entre 1.50 et 5.00 (et TP recalculé si besoin)
+  const lookbackSR = 20
+  const pivot = 5
+  const n = candles.length
+  const fromSR = Math.max(0, n - lookbackSR)
+  const toSR = Math.max(0, n - 1) // exclude last candle
+  const sliceSR = candles.slice(fromSR, toSR)
+
+  const supportLow =
+    sliceSR.length > 0 ? sliceSR.reduce((acc, c) => Math.min(acc, c.low), Infinity) : entry
+  const resistanceHigh =
+    sliceSR.length > 0 ? sliceSR.reduce((acc, c) => Math.max(acc, c.high), -Infinity) : entry
+
+  const lastSwingHigh = findLastSwingHigh(candles, pivot)
+  const lastSwingLow = findLastSwingLow(candles, pivot)
+
+  // Small buffer so SL is "just beyond" the level.
+  const levelBuf = atr * 0.05
+
+  let stopLoss = isLong ? supportLow + levelBuf : resistanceHigh - levelBuf
+  if (isLong && stopLoss >= entry) stopLoss = entry - atr * 1.0
+  if (!isLong && stopLoss <= entry) stopLoss = entry + atr * 1.0
+
+  const rrDesired = clamp(1.5 + ((score ?? 50) / 100) ** 1.2 * 3.5, 1.5, 5.0)
+
+  let takeProfit = isLong ? (lastSwingHigh ?? entry + atr * 2) : (lastSwingLow ?? entry - atr * 2)
+
+  // If TP doesn't make sense directionally, fallback to RR desired.
+  const riskDist = Math.abs(entry - stopLoss)
+  const tpMakesSense = isLong ? takeProfit > entry : takeProfit < entry
+
+  if (!tpMakesSense || !Number.isFinite(takeProfit)) {
+    takeProfit = isLong ? entry + riskDist * rrDesired : entry - riskDist * rrDesired
+  }
+
+  let rr = riskDist > 0 ? Math.abs(takeProfit - entry) / riskDist : rrDesired
+  rr = clamp(rr, 1.5, 5.0)
+
+  // Ensure TP matches clamped RR.
+  takeProfit = isLong ? entry + riskDist * rr : entry - riskDist * rr
 
   // Active signals based on direction.
   const emaActive = isLong ? emaBull : !emaBull
@@ -459,9 +657,10 @@ function TradeAutoPanel({ item, result }) {
   const slPct = pctFromEntry(trade.stopLoss)
   const tpPct = pctFromEntry(trade.takeProfit)
 
-  const rrPct = clamp((Number(trade.rr) / 3) * 100, 0, 100)
-  const rr = Number(trade.rr)
-  const rrText = Number.isFinite(rr) ? rr.toFixed(2) : '—'
+  const rrRaw = Number(trade.rr)
+  const rrClamped = clamp(rrRaw, 1.5, 5.0)
+  const rrPct = clamp(((rrClamped - 1.5) / (5.0 - 1.5)) * 100, 0, 100)
+  const rrText = Number.isFinite(rrClamped) ? rrClamped.toFixed(2) : '—'
 
   const signalChip = (key, label, value) => {
     const active = Boolean(signals?.[key])
@@ -495,7 +694,7 @@ function TradeAutoPanel({ item, result }) {
         </div>
         <div className="trade-row">
           <div className="trade-k">
-            Stop Loss (ATR x1.5)
+            Stop Loss (support récent)
           </div>
           <div className="trade-v mono stop">
             {fmt(trade.stopLoss)}
@@ -504,7 +703,7 @@ function TradeAutoPanel({ item, result }) {
         </div>
         <div className="trade-row">
           <div className="trade-k">
-            Take Profit (ATR x4)
+            Take Profit (dernier swing)
           </div>
           <div className="trade-v mono take">
             {fmt(trade.takeProfit)}
@@ -599,8 +798,20 @@ export default function App() {
     }
     return initial
   })
+  const [scoreHistory, setScoreHistory] = useState({})
+  const [scorePulse, setScorePulse] = useState({})
+  const [mobileWatchlistOpen, setMobileWatchlistOpen] = useState(false)
+  const lastScoreRef = useRef({})
   const scanningRef = useRef(false)
   const simStateRef = useRef({})
+
+  const onPickSymbol = useCallback(
+    (tvSymbol) => {
+      setSelectedTvSymbol(tvSymbol)
+      setMobileWatchlistOpen(false)
+    },
+    [setSelectedTvSymbol],
+  )
 
   const scanNow = useCallback(async () => {
     if (scanningRef.current) return
@@ -609,13 +820,51 @@ export default function App() {
     try {
       // 1) Mettre tout de suite des scores (simulation) pour éviter les "..."
       // 2) Recalculer ensuite les cryptos à partir de Binance et remplacer les scores simulés.
+      const simHistoryScores = {}
+      const simPulseSyms = []
+
       const simUpdates = {}
       for (const item of visibleItems) {
         const prevSim = simStateRef.current[item.tvSymbol]
         const { computed, nextSim } = simulateComputedForItem(item, prevSim)
         simStateRef.current[item.tvSymbol] = nextSim
         simUpdates[item.tvSymbol] = computed
+
+        const nextScore = computed?.score
+        if (typeof nextScore === 'number') {
+          simHistoryScores[item.tvSymbol] = nextScore
+          const prevScore = lastScoreRef.current[item.tvSymbol]
+          if (prevScore !== nextScore) simPulseSyms.push(item.tvSymbol)
+          lastScoreRef.current[item.tvSymbol] = nextScore
+        }
       }
+
+      // Historique pour sparkline + animation sur changements.
+      if (Object.keys(simHistoryScores).length > 0) {
+        setScoreHistory((prev) => {
+          const next = { ...prev }
+          for (const [sym, score] of Object.entries(simHistoryScores)) {
+            const arr = next[sym] ?? []
+            next[sym] = [...arr, score].slice(-SCORE_HISTORY_LEN)
+          }
+          return next
+        })
+
+        if (simPulseSyms.length > 0) {
+          setScorePulse((prev) => {
+            const next = { ...prev }
+            for (const sym of simPulseSyms) next[sym] = true
+            return next
+          })
+
+          simPulseSyms.forEach((sym) => {
+            window.setTimeout(() => {
+              setScorePulse((prev) => ({ ...prev, [sym]: false }))
+            }, 520)
+          })
+        }
+      }
+
       setScanResults((prev) => ({ ...prev, ...simUpdates }))
 
       const cryptoItems = visibleItems.filter(
@@ -638,13 +887,50 @@ export default function App() {
 
       const settled = await Promise.allSettled(tasks)
       const finalUpdates = {}
+      const finalHistoryScores = {}
+      const finalPulseSyms = []
+
       for (const s of settled) {
         if (s.status !== 'fulfilled') continue
         const { tvSymbol, computed } = s.value
         finalUpdates[tvSymbol] = computed
+
+        const nextScore = computed?.score
+        if (typeof nextScore === 'number') {
+          finalHistoryScores[tvSymbol] = nextScore
+          const prevScore = lastScoreRef.current[tvSymbol]
+          if (prevScore !== nextScore) finalPulseSyms.push(tvSymbol)
+          lastScoreRef.current[tvSymbol] = nextScore
+        }
+
         simStateRef.current[tvSymbol] = {
           score: computed.score,
           entry: computed.indicators.entry,
+        }
+      }
+
+      if (Object.keys(finalHistoryScores).length > 0) {
+        setScoreHistory((prev) => {
+          const next = { ...prev }
+          for (const [sym, score] of Object.entries(finalHistoryScores)) {
+            const arr = next[sym] ?? []
+            next[sym] = [...arr, score].slice(-SCORE_HISTORY_LEN)
+          }
+          return next
+        })
+
+        if (finalPulseSyms.length > 0) {
+          setScorePulse((prev) => {
+            const next = { ...prev }
+            for (const sym of finalPulseSyms) next[sym] = true
+            return next
+          })
+
+          finalPulseSyms.forEach((sym) => {
+            window.setTimeout(() => {
+              setScorePulse((prev) => ({ ...prev, [sym]: false }))
+            }, 520)
+          })
         }
       }
 
@@ -669,11 +955,24 @@ export default function App() {
     <div className="scanner-app">
       <header className="scanner-header">
         <div className="brand">
-          <div className="brand-title">Bloomberg Scanner</div>
-          <div className="brand-subtitle">TradingView embed + signaux EMA/RSI/MACD/BB</div>
+          <div className="brand-title">
+            Scanner Pro
+            <span className="brand-accent">™</span>
+          </div>
+          <div className="brand-subtitle">
+            TradingView chart (15m) + EMA/RSI/MACD/BB (scores 0-100)
+          </div>
         </div>
 
         <div className="header-right">
+          <button
+            type="button"
+            className="hamburger-btn mobile-only"
+            onClick={() => setMobileWatchlistOpen(true)}
+            aria-label="Open watchlist menu"
+          >
+            ☰
+          </button>
           <div className="clock mono">{formatClock(now)}</div>
           <div className="live-pill">
             <span className="live-dot" />
@@ -683,48 +982,53 @@ export default function App() {
       </header>
 
       <main className="scanner-grid">
-        <aside className="panel panel-left">
-          <div className="panel-title">Watchlist</div>
-
-          <div className="filter-bar" role="tablist" aria-label="Filter watchlist">
-            {FILTERS.map((f) => (
-              <button
-                key={f}
-                type="button"
-                className={`filter-btn ${filter === f ? 'is-active' : ''}`}
-                onClick={() => setFilter(f)}
-              >
-                {f}
-              </button>
-            ))}
-          </div>
-
-          <div className="watchlist">
-            {visibleItems.map((item) => {
-              const isActive = item.tvSymbol === selectedTvSymbol
-              const result = scanResults[item.tvSymbol]
-              const score = result && result.score != null ? result.score : null
-              const badgeClass = score == null ? 'badge--neutral' : scoreToBadgeClass(score)
-              return (
-                <button
-                  key={item.tvSymbol}
-                  type="button"
-                  className={`watchlist-item ${isActive ? 'is-active' : ''}`}
-                  onClick={() => setSelectedTvSymbol(item.tvSymbol)}
-                >
-                  <span className="watchlist-label">{item.label}</span>
-                  <span className={`score-badge ${badgeClass}`}>
-                    {score == null ? '...' : score}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
-
-          <div className="panel-help">
-            Scores recalcules toutes les {Math.round(POLL_MS / 1000)}s (source: Stooq).
-          </div>
+        <aside className="panel panel-left desktop-only">
+          <WatchlistPanel
+            visibleItems={visibleItems}
+            selectedTvSymbol={selectedTvSymbol}
+            scanResults={scanResults}
+            filter={filter}
+            setFilter={setFilter}
+            onPickSymbol={onPickSymbol}
+            scoreHistory={scoreHistory}
+            scorePulse={scorePulse}
+          />
         </aside>
+
+        <div
+          className={`mobile-watchlist-overlay ${mobileWatchlistOpen ? 'is-open' : ''} mobile-only`}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Watchlist"
+          aria-hidden={!mobileWatchlistOpen}
+        >
+          <div className="mobile-watchlist-sheet">
+            <div className="mobile-sheet-top">
+              <div className="mobile-sheet-title">Watchlist</div>
+              <button
+                type="button"
+                className="mobile-sheet-close"
+                onClick={() => setMobileWatchlistOpen(false)}
+                aria-label="Close watchlist menu"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mobile-sheet-content">
+              <WatchlistPanel
+                visibleItems={visibleItems}
+                selectedTvSymbol={selectedTvSymbol}
+                scanResults={scanResults}
+                filter={filter}
+                setFilter={setFilter}
+                onPickSymbol={onPickSymbol}
+                scoreHistory={scoreHistory}
+                scorePulse={scorePulse}
+              />
+            </div>
+          </div>
+        </div>
 
         <section className="panel panel-center">
           <div className="panel-header">

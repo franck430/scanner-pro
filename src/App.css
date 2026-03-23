@@ -213,10 +213,30 @@
   padding-top: 2px;
 }
 
+.hamburger-btn {
+  display: none;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 229, 160, 0.25);
+  background: rgba(0, 229, 160, 0.10);
+  color: rgba(229, 231, 235, 0.98);
+  cursor: pointer;
+  font-size: 20px;
+  font-weight: 900;
+}
+
 .brand-title {
   font-size: 20px;
   font-weight: 800;
   letter-spacing: -0.2px;
+}
+
+.brand-accent {
+  display: inline-block;
+  margin-left: 6px;
+  color: rgba(0, 229, 160, 0.95);
+  font-weight: 900;
 }
 
 .brand-subtitle {
@@ -329,6 +349,36 @@
     box-shadow 160ms ease;
 }
 
+.watchlist-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.trend-arrow {
+  width: 22px;
+  text-align: center;
+  font-weight: 900;
+  font-size: 16px;
+}
+
+.trend-up {
+  color: rgba(0, 229, 160, 0.98);
+}
+
+.trend-mid {
+  color: rgba(255, 176, 32, 0.98);
+}
+
+.trend-down {
+  color: rgba(255, 61, 90, 0.98);
+}
+
+.sparkline {
+  opacity: 0.95;
+}
+
 .watchlist-item:hover {
   border-color: rgba(0, 229, 160, 0.55);
   background: rgba(0, 229, 160, 0.08);
@@ -391,6 +441,26 @@
   background: rgba(148, 163, 184, 0.08);
   font-weight: 900;
   color: rgba(229, 231, 235, 0.95);
+  transition: transform 180ms ease, filter 180ms ease;
+}
+
+.score-badge--pulse {
+  animation: scorePulse 520ms ease-out;
+}
+
+@keyframes scorePulse {
+  0% {
+    transform: translateY(0) scale(1);
+    filter: brightness(1);
+  }
+  40% {
+    transform: translateY(-2px) scale(1.06);
+    filter: brightness(1.25);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    filter: brightness(1);
+  }
 }
 
 .score-badge--big {
@@ -520,6 +590,111 @@
 
   .tv-shell {
     height: 520px;
+  }
+}
+
+/* --- Mobile overlay watchlist --- */
+.desktop-only {
+  display: block;
+}
+
+.mobile-only {
+  display: none;
+}
+
+.mobile-watchlist-overlay {
+  display: none;
+}
+
+.mobile-watchlist-overlay.is-open {
+  display: block;
+}
+
+.mobile-watchlist-overlay {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  background: rgba(8, 12, 18, 0.92);
+  padding: 14px;
+}
+
+.mobile-watchlist-sheet {
+  height: 100%;
+  overflow: auto;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(8, 12, 18, 0.78);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(10px);
+  padding: 14px;
+}
+
+.mobile-sheet-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.mobile-sheet-title {
+  font-weight: 900;
+  font-family: 'Space Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+  font-size: 16px;
+}
+
+.mobile-sheet-close {
+  width: 44px;
+  height: 44px;
+  border-radius: 16px;
+  cursor: pointer;
+  border: 1px solid rgba(148, 163, 184, 0.20);
+  background: rgba(2, 6, 23, 0.25);
+  color: rgba(229, 231, 235, 0.98);
+  font-size: 18px;
+  font-weight: 900;
+}
+
+@media (max-width: 720px) {
+  .desktop-only {
+    display: none;
+  }
+
+  .mobile-only {
+    display: block;
+  }
+
+  .hamburger-btn {
+    display: block;
+  }
+
+  .scanner-header {
+    align-items: center;
+  }
+
+  .tv-shell {
+    height: 430px;
+  }
+
+  .watchlist-item {
+    padding: 14px 14px;
+  }
+
+  .watchlist-label {
+    font-size: 14px;
+  }
+
+  .score-badge {
+    min-width: 58px;
+  }
+
+  .sparkline {
+    width: 52px;
+    height: auto;
+  }
+
+  .watchlist-right {
+    gap: 8px;
   }
 }
 
