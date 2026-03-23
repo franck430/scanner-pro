@@ -1104,7 +1104,7 @@ function TradingViewAdvancedChart({ symbol, tvInterval }) {
   )
 }
 
-function SignalIdealPanel({ item, result, contextIndicators, contextTfLabel, contextLoading }) {
+function SignalIdealPanel({ item, result, contextIndicators, contextTfLabel, contextLoading, selectedTimeframe }) {
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState('')
   const [aiText, setAiText] = useState('')
@@ -1316,6 +1316,9 @@ Maximum 5 lignes.`
           Contexte {contextTfLabel ?? '15m'}
           {contextLoading ? ' (chargement…)' : ''}
         </div>
+        <div className="context-debug" style={{ fontSize: '11px', opacity: 0.9, marginBottom: 6 }}>
+          TF actif : {contextTfLabel ?? '—'} | RSI calculé : {Number.isFinite(indicators?.rsi) ? indicators.rsi.toFixed(1) : '—'}
+        </div>
         <div className="signals-row">
           <div className={`signal-chip ${indicators.rsi >= 50 ? 'is-green' : 'is-red'}`}>
             RSI {Number.isFinite(indicators.rsi) ? indicators.rsi.toFixed(1) : '—'}
@@ -1372,11 +1375,12 @@ export default function App() {
   )
 
   const [selectedTvSymbol, setSelectedTvSymbol] = useState(WATCHLIST[0].tvSymbol)
-  const [selectedTimeframeId, setSelectedTimeframeId] = useState(TIMEFRAMES[2].id)
-  const selectedTimeframe = useMemo(
-    () => TIMEFRAMES.find((t) => t.id === selectedTimeframeId) ?? TIMEFRAMES[0],
-    [selectedTimeframeId],
-  )
+  // Un seul state pour chart + contexte (boutons timeframe)
+  const [selectedTimeframe, setSelectedTimeframe] = useState(TIMEFRAMES[2])
+
+  const handleTimeframeClick = useCallback((tf) => {
+    setSelectedTimeframe(tf)
+  }, [])
 
   const selectedItem = useMemo(
     () => WATCHLIST.find((x) => x.tvSymbol === selectedTvSymbol) ?? WATCHLIST[0],
@@ -1700,57 +1704,59 @@ export default function App() {
     setScorePulse({})
     lastScoreRef.current = {}
     simStateRef.current = {}
-  }, [selectedTimeframeId])
+  }, [selectedTimeframe])
 
   const selectedResult = scanResults[selectedTvSymbol]
   const selectedComputed = selectedResult && selectedResult.confluence ? selectedResult : null
 
   const [contextIndicators, setContextIndicators] = useState(null)
-  const [contextTfLabel, setContextTfLabel] = useState(selectedTimeframe?.label ?? '15m')
+  const [contextTfLabel, setContextTfLabel] = useState(selectedTimeframe.label ?? '15m')
   const [contextLoading, setContextLoading] = useState(false)
 
+  // Recalcule le contexte (RSI, MACD, etc.) quand le timeframe ou le symbole change
   useEffect(() => {
-    const tf = TIMEFRAMES.find((t) => t.id === selectedTimeframeId) ?? TIMEFRAMES[2]
-    const mtfKey = ['1D', '4H', '15m'].includes(selectedTimeframeId) ? selectedTimeframeId : null
+    const tfId = selectedTimeframe.id
+    const mtfKey = ['1D', '4H', '15m'].includes(tfId) ? tfId : null
     const result = scanResults[selectedTvSymbol]
     const mtfData = result?.mtfData
 
     if (mtfKey && mtfData?.[mtfKey]?.indicators) {
-      setContextTfLabel(tf.label)
-      setContextIndicators(mtfData[mtfKey].indicators)
+      const ind = mtfData[mtfKey].indicators
+      setContextTfLabel(selectedTimeframe.label)
+      setContextIndicators(ind)
       setContextLoading(false)
       return
     }
 
     if (!result?.confluence?.indicators) {
       setContextIndicators(null)
-      setContextTfLabel(tf.label)
+      setContextTfLabel(selectedTimeframe.label)
       setContextLoading(false)
       return
     }
 
     const item = WATCHLIST.find((x) => x.tvSymbol === selectedTvSymbol)
     if (!item?.binanceSymbol && !item?.twelveSymbol) {
-      const fallback = selectedTimeframeId === '1m' || selectedTimeframeId === '5m' ? '15m' : selectedTimeframeId === '1H' ? '4H' : '1D'
+      const fallback = tfId === '1m' || tfId === '5m' ? '15m' : tfId === '1H' ? '4H' : '1D'
       setContextIndicators(mtfData?.[fallback]?.indicators ?? result.confluence.indicators)
-      setContextTfLabel(tf.label)
+      setContextTfLabel(selectedTimeframe.label)
       setContextLoading(false)
       return
     }
 
     setContextLoading(true)
-    setContextTfLabel(tf.label)
+    setContextTfLabel(selectedTimeframe.label)
 
     let cancelled = false
     ;(async () => {
       try {
         let candles = []
         if (item.binanceSymbol) {
-          candles = await fetchBinanceKlines(item.binanceSymbol, tf.binanceInterval, BINANCE_LIMIT)
+          candles = await fetchBinanceKlines(item.binanceSymbol, selectedTimeframe.binanceInterval, BINANCE_LIMIT)
         } else if (item.twelveSymbol && TWELVE_DATA_KEY) {
           candles = await fetchTwelveDataCandles(
             item.twelveSymbol,
-            tf.twelveInterval,
+            selectedTimeframe.twelveInterval,
             TWELVE_DATA_LIMIT,
             TWELVE_DATA_KEY,
           )
@@ -1761,12 +1767,12 @@ export default function App() {
           const computed = computeIndicatorsAndTrade(candles)
           if (computed) setContextIndicators(computed.indicators)
         } else {
-          const fallback = selectedTimeframeId === '1m' || selectedTimeframeId === '5m' ? '15m' : selectedTimeframeId === '1H' ? '4H' : '1D'
+          const fallback = tfId === '1m' || tfId === '5m' ? '15m' : tfId === '1H' ? '4H' : '1D'
           setContextIndicators(mtfData?.[fallback]?.indicators ?? result.confluence.indicators)
         }
       } catch {
         if (cancelled) return
-        const fallback = selectedTimeframeId === '1m' || selectedTimeframeId === '5m' ? '15m' : selectedTimeframeId === '1H' ? '4H' : '1D'
+        const fallback = tfId === '1m' || tfId === '5m' ? '15m' : tfId === '1H' ? '4H' : '1D'
         setContextIndicators(mtfData?.[fallback]?.indicators ?? result.confluence.indicators)
       } finally {
         if (!cancelled) setContextLoading(false)
@@ -1774,7 +1780,7 @@ export default function App() {
     })()
 
     return () => { cancelled = true }
-  }, [selectedTvSymbol, selectedTimeframeId, scanResults])
+  }, [selectedTvSymbol, selectedTimeframe.id, selectedTimeframe.label, selectedTimeframe.binanceInterval, selectedTimeframe.twelveInterval, scanResults])
 
   return (
     <div className={`scanner-app ${chartFullscreen ? 'is-fullscreen' : ''}`}>
@@ -1896,7 +1902,9 @@ export default function App() {
               <div className="panel-subtitle">{selectedItem.label} (TradingView)</div>
             </div>
             <div className="panel-header-right">
-              <div className="panel-badge mono">{selectedTimeframeId}</div>
+              <div className="panel-badge mono" title="Timeframe actif">
+                TF: {selectedTimeframe.label}
+              </div>
               <button
                 type="button"
                 className="fullscreen-btn"
@@ -1915,8 +1923,9 @@ export default function App() {
                 <button
                   key={t.id}
                   type="button"
-                  className={`timeframe-btn ${selectedTimeframeId === t.id ? 'is-active' : ''}`}
-                  onClick={() => setSelectedTimeframeId(t.id)}
+                  className={`timeframe-btn ${selectedTimeframe.id === t.id ? 'is-active' : ''}`}
+                  onClick={() => handleTimeframeClick(t)}
+                  aria-pressed={selectedTimeframe.id === t.id}
                 >
                   {t.label}
                 </button>
@@ -1941,6 +1950,7 @@ export default function App() {
             contextIndicators={contextIndicators}
             contextTfLabel={contextTfLabel}
             contextLoading={contextLoading}
+            selectedTimeframe={selectedTimeframe}
           />
         </aside>
       </main>
