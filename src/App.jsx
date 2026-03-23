@@ -15,8 +15,9 @@ const LS_TELEGRAM_LAST = 'scanner-pro-telegram-last-alert'
 const FILTERS = ['Tous', 'Crypto', 'Forex', 'Indices', 'Matières', '🔥 Signaux forts']
 const STRONG_SIGNAL_FILTER = '🔥 Signaux forts'
 
+// Twelve Data: 15min pour Forex intraday (au lieu de 1day)
 const MTF_TIMEFRAMES = [
-  { key: '1D', binanceInterval: '1d', twelveInterval: '1day' },
+  { key: '1D', binanceInterval: '1d', twelveInterval: '15min' },
   { key: '4H', binanceInterval: '4h', twelveInterval: '4h' },
   { key: '15m', binanceInterval: '15m', twelveInterval: '15min' },
 ]
@@ -461,44 +462,64 @@ function computeATR(candles, period = 14) {
   return atr
 }
 
-function findLastSwingHigh(candles, pivot = 5) {
+/** Tous les pivots hauts sur les 100 dernières bougies. */
+function findPivotHighs(candles, pivot = 5) {
   const n = candles.length
-  if (n < pivot * 2 + 3) return null
-
-  let last = null
-  for (let i = pivot; i <= n - pivot - 2; i++) {
-    const left = candles.slice(i - pivot, i + 1)
-    const right = candles.slice(i, i + pivot + 1)
-    const window = left.length === pivot + 1 ? left.concat(right.slice(1)) : null
-    if (!window || window.length !== pivot * 2 + 1) continue
-
-    const maxHigh = window.reduce((acc, c) => Math.max(acc, c.high), -Infinity)
+  if (n < pivot * 2 + 1) return []
+  const pts = []
+  for (let i = pivot; i < n - pivot; i++) {
     const high = candles[i].high
-
-    if (high >= maxHigh) last = high
+    let isPivot = true
+    for (let j = i - pivot; j <= i + pivot; j++) {
+      if (j !== i && candles[j].high >= high) {
+        isPivot = false
+        break
+      }
+    }
+    if (isPivot) pts.push(high)
   }
-
-  return last
+  return pts
 }
 
-function findLastSwingLow(candles, pivot = 5) {
+/** Tous les pivots bas sur les 100 dernières bougies. */
+function findPivotLows(candles, pivot = 5) {
   const n = candles.length
-  if (n < pivot * 2 + 3) return null
-
-  let last = null
-  for (let i = pivot; i <= n - pivot - 2; i++) {
-    const left = candles.slice(i - pivot, i + 1)
-    const right = candles.slice(i, i + pivot + 1)
-    const window = left.length === pivot + 1 ? left.concat(right.slice(1)) : null
-    if (!window || window.length !== pivot * 2 + 1) continue
-
-    const minLow = window.reduce((acc, c) => Math.min(acc, c.low), Infinity)
+  if (n < pivot * 2 + 1) return []
+  const pts = []
+  for (let i = pivot; i < n - pivot; i++) {
     const low = candles[i].low
-
-    if (low <= minLow) last = low
+    let isPivot = true
+    for (let j = i - pivot; j <= i + pivot; j++) {
+      if (j !== i && candles[j].low <= low) {
+        isPivot = false
+        break
+      }
+    }
+    if (isPivot) pts.push(low)
   }
+  return pts
+}
 
-  return last
+/** Support le plus proche (meilleur pivot bas sous le prix). */
+function getNearestSupport(candles, entry, pivot = 5) {
+  const lows = findPivotLows(candles, pivot)
+  const below = lows.filter((v) => v < entry)
+  if (below.length > 0) return Math.max(...below)
+  const recent = candles.slice(-30)
+  if (recent.length === 0) return null
+  const fallback = Math.min(...recent.map((c) => c.low))
+  return fallback < entry ? fallback : null
+}
+
+/** Résistance la plus proche (meilleur pivot haut au-dessus du prix). */
+function getNearestResistance(candles, entry, pivot = 5) {
+  const highs = findPivotHighs(candles, pivot)
+  const above = highs.filter((v) => v > entry)
+  if (above.length > 0) return Math.min(...above)
+  const recent = candles.slice(-30)
+  if (recent.length === 0) return null
+  const fallback = Math.max(...recent.map((c) => c.high))
+  return fallback > entry ? fallback : null
 }
 
 function scoreToBadgeClass(score) {
@@ -744,6 +765,8 @@ function simulateComputedForItem(item, prevSim) {
         stopLoss,
         takeProfit,
         rr,
+        support: isLong ? entry - riskDist : entry - riskDist * 0.5,
+        resistance: isLong ? entry + riskDist * 0.5 : entry + riskDist,
       },
       signals: {
         RSI: rsiActive,
@@ -796,48 +819,44 @@ function computeIndicatorsAndTrade(candles) {
 
   const isLong = direction === 'LONG'
 
-  // --- Dynamic Risk/Reward ---
-  // 1) SL via support/résistance récents (min low / max high)
-  // 2) TP via dernier swing high/low
-  // 3) RR contraint entre 1.50 et 5.00 (et TP recalculé si besoin)
-  const lookbackSR = 20
+  // --- Support/Résistance basés sur pivots (100 bougies) ---
   const pivot = 5
-  const n = candles.length
-  const fromSR = Math.max(0, n - lookbackSR)
-  const toSR = Math.max(0, n - 1) // exclude last candle
-  const sliceSR = candles.slice(fromSR, toSR)
+  const nearestSupport = getNearestSupport(candles, entry, pivot)
+  const nearestResistance = getNearestResistance(candles, entry, pivot)
+  const levelBuf = atr * 0.03 // léger buffer sous/sur le niveau
 
-  const supportLow =
-    sliceSR.length > 0 ? sliceSR.reduce((acc, c) => Math.min(acc, c.low), Infinity) : entry
-  const resistanceHigh =
-    sliceSR.length > 0 ? sliceSR.reduce((acc, c) => Math.max(acc, c.high), -Infinity) : entry
+  // SL et TP à partir des vrais niveaux S/R
+  let stopLoss
+  let takeProfit
+  if (isLong) {
+    stopLoss =
+      Number.isFinite(nearestSupport) && nearestSupport < entry
+        ? nearestSupport - levelBuf
+        : entry - atr * 1.2
+    takeProfit =
+      Number.isFinite(nearestResistance) && nearestResistance > entry
+        ? nearestResistance + levelBuf
+        : entry + atr * 2.5
+  } else {
+    stopLoss =
+      Number.isFinite(nearestResistance) && nearestResistance > entry
+        ? nearestResistance + levelBuf
+        : entry + atr * 1.2
+    takeProfit =
+      Number.isFinite(nearestSupport) && nearestSupport < entry
+        ? nearestSupport - levelBuf
+        : entry - atr * 2.5
+  }
 
-  const lastSwingHigh = findLastSwingHigh(candles, pivot)
-  const lastSwingLow = findLastSwingLow(candles, pivot)
-
-  // Small buffer so SL is "just beyond" the level.
-  const levelBuf = atr * 0.05
-
-  let stopLoss = isLong ? supportLow + levelBuf : resistanceHigh - levelBuf
+  // Sécuriser SL (doit être du bon côté du prix)
   if (isLong && stopLoss >= entry) stopLoss = entry - atr * 1.0
   if (!isLong && stopLoss <= entry) stopLoss = entry + atr * 1.0
 
-  const rrDesired = clamp(1.5 + ((score ?? 50) / 100) ** 1.2 * 3.5, 1.5, 5.0)
-
-  let takeProfit = isLong ? (lastSwingHigh ?? entry + atr * 2) : (lastSwingLow ?? entry - atr * 2)
-
-  // If TP doesn't make sense directionally, fallback to RR desired.
   const riskDist = Math.abs(entry - stopLoss)
-  const tpMakesSense = isLong ? takeProfit > entry : takeProfit < entry
-
-  if (!tpMakesSense || !Number.isFinite(takeProfit)) {
-    takeProfit = isLong ? entry + riskDist * rrDesired : entry - riskDist * rrDesired
-  }
-
-  let rr = riskDist > 0 ? Math.abs(takeProfit - entry) / riskDist : rrDesired
+  let rr = riskDist > 0 ? Math.abs(takeProfit - entry) / riskDist : 2.0
   rr = clamp(rr, 1.5, 5.0)
 
-  // Ensure TP matches clamped RR.
+  // Ajuster TP pour respecter le RR contraint
   takeProfit = isLong ? entry + riskDist * rr : entry - riskDist * rr
 
   // Active signals based on direction.
@@ -863,6 +882,8 @@ function computeIndicatorsAndTrade(candles) {
       stopLoss,
       takeProfit,
       rr,
+      support: Number.isFinite(nearestSupport) ? nearestSupport : null,
+      resistance: Number.isFinite(nearestResistance) ? nearestResistance : null,
     },
     signals: {
       RSI: rsiActive,
@@ -1086,8 +1107,16 @@ Maximum 5 lignes.`
           <div className="trade-v mono">{fmt(trade.entry)}</div>
         </div>
         <div className="trade-row">
+          <div className="trade-k">Support le plus proche</div>
+          <div className="trade-v mono">{trade.support != null ? fmt(trade.support) : '—'}</div>
+        </div>
+        <div className="trade-row">
+          <div className="trade-k">Résistance la plus proche</div>
+          <div className="trade-v mono">{trade.resistance != null ? fmt(trade.resistance) : '—'}</div>
+        </div>
+        <div className="trade-row">
           <div className="trade-k">
-            Stop Loss (support récent)
+            Stop Loss (niveau S/R)
           </div>
           <div className="trade-v mono stop">
             {fmt(trade.stopLoss)}
@@ -1096,7 +1125,7 @@ Maximum 5 lignes.`
         </div>
         <div className="trade-row">
           <div className="trade-k">
-            Take Profit (dernier swing)
+            Take Profit (niveau S/R)
           </div>
           <div className="trade-v mono take">
             {fmt(trade.takeProfit)}
