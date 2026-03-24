@@ -8,6 +8,20 @@ const SCORE_HISTORY_LEN = 24
 const TWELVE_DATA_KEY = import.meta.env.VITE_TWELVE_DATA_KEY
 const CLAUDE_MODEL = 'claude-haiku-4-5-20251001'
 
+/** Résumé divergences avant le premier scan réel (pas de bougies OHLC). */
+function getDivergencePlaceholderSummary(item) {
+  if (item?.twelveSymbol && !TWELVE_DATA_KEY) {
+    return 'Clé Twelve Data manquante (VITE_TWELVE_DATA_KEY). Les divergences RSI/MACD seront calculées sur les bougies Twelve Data une fois la clé configurée.'
+  }
+  if (item?.twelveSymbol && TWELVE_DATA_KEY) {
+    return 'Chargement des bougies Twelve Data (Forex / indices / matières) — divergences calculées après réception des OHLC.'
+  }
+  if (item?.binanceSymbol) {
+    return 'Chargement des bougies Binance — divergences calculées après réception des OHLC.'
+  }
+  return 'En attente du premier scan réel pour calculer les divergences.'
+}
+
 const TELEGRAM_COOLDOWN_MS = 30 * 60 * 1000
 const LS_TELEGRAM_ALERTS = 'scanner-pro-telegram-alerts'
 const LS_TELEGRAM_LAST = 'scanner-pro-telegram-last-alert'
@@ -979,7 +993,8 @@ function mergeDivergenceDetections(candles, closes) {
       scoreAdjust: 0,
       hasBullish: false,
       hasBearish: false,
-      summary: 'Donnees insuffisantes pour divergences',
+      summary:
+        'Historique OHLC trop court pour divergences (minimum ~40 bougies requises sur les données réelles Binance ou Twelve Data).',
     }
   }
   const rsiByBar = buildRsiByBar(closes)
@@ -993,7 +1008,9 @@ function mergeDivergenceDetections(candles, closes) {
   if (hasBullish && !hasBearish) scoreAdjust = 15
   else if (hasBearish && !hasBullish) scoreAdjust = -15
   const summary =
-    messages.length > 0 ? messages.join(' | ') : 'Aucune divergence RSI/MACD significative sur les pivots recents'
+    messages.length > 0
+      ? messages.join(' | ')
+      : 'Aucune divergence RSI/MACD sur les pivots récents (calcul sur bougies OHLC réelles Binance ou Twelve Data).'
   return { messages, scoreAdjust, hasBullish, hasBearish, summary }
 }
 
@@ -1312,7 +1329,7 @@ function simulateComputedForItem(item, prevSim) {
         scoreAdjust: 0,
         hasBullish: false,
         hasBearish: false,
-        summary: 'Simulation — divergences non calculees sur donnees fictives',
+        summary: getDivergencePlaceholderSummary(item),
       },
     },
     nextSim: { score, entry },
@@ -2184,8 +2201,9 @@ export default function App() {
 
       setScanResults((prev) => ({ ...prev, ...simUpdates }))
 
+      // Twelve Data exige VITE_TWELVE_DATA_KEY : sinon ne pas lancer de tâches vouées à l'échec (Forex reste en placeholder).
       const realDataItems = WATCHLIST.filter(
-        (x) => x.binanceSymbol || x.twelveSymbol,
+        (x) => x.binanceSymbol || (x.twelveSymbol && TWELVE_DATA_KEY),
       )
       if (realDataItems.length === 0) return
 
