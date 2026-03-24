@@ -27,6 +27,12 @@ const LS_TELEGRAM_ALERTS = 'scanner-pro-telegram-alerts'
 const LS_TELEGRAM_LAST = 'scanner-pro-telegram-last-alert'
 const LS_CALENDAR_CACHE = 'scanner-pro-calendar-cache'
 const CALENDAR_CLIENT_TTL_MS = 60 * 60 * 1000
+const LS_POSITION_CAPITAL = 'scanner-pro-position-capital'
+const LS_POSITION_RISK = 'scanner-pro-position-risk'
+const LS_POSITION_ACCOUNT = 'scanner-pro-position-account-type'
+
+/** Unités de base par lot forex (MT4) selon type de compte */
+const FOREX_LOT_UNITS = { Standard: 100000, Mini: 10000, Micro: 1000 }
 
 const FILTERS = ['Tous', 'Crypto', 'Forex', 'Matières', '🔥 Signaux forts']
 const STRONG_SIGNAL_FILTER = '🔥 Signaux forts'
@@ -350,6 +356,78 @@ function WatchlistPanel({
 
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n))
+}
+
+/**
+ * Montant risqué = capital × risque%
+ * Distance SL = |entrée − SL| / entrée (fraction)
+ * Taille position (€) = montant risqué / distance SL
+ * Lots recommandés = taille position / prix entrée (unités d’actif)
+ */
+function computePositionSizing(capital, riskPct, entry, stopLoss, accountType) {
+  const e = Number(entry)
+  const sl = Number(stopLoss)
+  const cap = Number(capital)
+  const r = Number(riskPct)
+  if (!Number.isFinite(e) || e <= 0 || !Number.isFinite(sl) || !Number.isFinite(cap) || cap <= 0) return null
+  if (!Number.isFinite(r) || r <= 0) return null
+  const d = Math.abs(e - sl) / e
+  if (d <= 0 || !Number.isFinite(d)) return null
+  const distanceSlPct = d * 100
+  const montantRisque = cap * (r / 100)
+  const taillePosition = montantRisque / d
+  const lotsRecommended = taillePosition / e
+  const lotUnits = FOREX_LOT_UNITS[accountType] ?? FOREX_LOT_UNITS.Standard
+  const forexLotsEquivalent = lotsRecommended / lotUnits
+  const exposurePctOfCapital = (taillePosition / cap) * 100
+  const tooLarge = taillePosition > cap * 0.2
+  return {
+    montantRisque,
+    distanceSlPct,
+    taillePosition,
+    lotsRecommended,
+    forexLotsEquivalent,
+    exposurePctOfCapital,
+    tooLarge,
+  }
+}
+
+function positionRiskTier(riskPct) {
+  const x = Number(riskPct)
+  if (!Number.isFinite(x)) return 'orange'
+  if (x < 1) return 'green'
+  if (x <= 2) return 'orange'
+  return 'red'
+}
+
+function readPositionCapital() {
+  try {
+    const c = parseFloat(localStorage.getItem(LS_POSITION_CAPITAL))
+    if (Number.isFinite(c) && c > 0) return c
+  } catch {
+    /* ignore */
+  }
+  return 10000
+}
+
+function readPositionRisk() {
+  try {
+    const x = parseFloat(localStorage.getItem(LS_POSITION_RISK))
+    if (Number.isFinite(x) && x > 0) return x
+  } catch {
+    /* ignore */
+  }
+  return 1
+}
+
+function readPositionAccount() {
+  try {
+    const a = localStorage.getItem(LS_POSITION_ACCOUNT)
+    if (a === 'Standard' || a === 'Mini' || a === 'Micro') return a
+  } catch {
+    /* ignore */
+  }
+  return 'Standard'
 }
 
 /** Ajuste le score confluence selon Fear & Greed (crypto) */
@@ -1554,9 +1632,44 @@ function SignalIdealPanel({
   fearGreed,
   macroContext,
 }) {
+  const [capital, setCapital] = useState(() => readPositionCapital())
+  const [riskPct, setRiskPct] = useState(() => readPositionRisk())
+  const [accountType, setAccountType] = useState(() => readPositionAccount())
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState('')
   const [aiText, setAiText] = useState('')
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_POSITION_CAPITAL, String(capital))
+    } catch {
+      /* ignore */
+    }
+  }, [capital])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_POSITION_RISK, String(riskPct))
+    } catch {
+      /* ignore */
+    }
+  }, [riskPct])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_POSITION_ACCOUNT, accountType)
+    } catch {
+      /* ignore */
+    }
+  }, [accountType])
+
+  const positionSizing = useMemo(() => {
+    const t = result?.confluence?.trade
+    if (!t) return null
+    return computePositionSizing(capital, riskPct, t.entry, t.stopLoss, accountType)
+  }, [result, capital, riskPct, accountType])
+
+  const riskTier = useMemo(() => positionRiskTier(riskPct), [riskPct])
 
   if (!result) {
     return (
@@ -1622,12 +1735,23 @@ function SignalIdealPanel({
       conf.divergenceSummary && String(conf.divergenceSummary).trim()
         ? `Divergences RSI/MACD (15m): ${conf.divergenceSummary}`
         : 'Divergences RSI/MACD: non disponibles'
+    const posForPrompt = computePositionSizing(
+      capital,
+      riskPct,
+      trade.entry,
+      trade.stopLoss,
+      accountType,
+    )
+    const posLine = posForPrompt
+      ? `Capital : ${Math.round(capital)}€ | Risque : ${riskPct}% | Lots recommandés : ${posForPrompt.lotsRecommended.toFixed(2)}`
+      : `Capital : ${Math.round(capital)}€ | Risque : ${riskPct}% | Lots recommandés : N/A (distance SL invalide)`
     const prompt = `Tu es un expert en trading. Analyse ces données techniques et donne un avis concis en français :
 actif=${item.label}
 scores timeframes: 1D=${conf.mtfScores['1D']} | 4H=${conf.mtfScores['4H']} | 15m=${conf.mtfScores['15m']}
 ${fgLine}
 ${macroLine}
 ${divLine}
+${posLine} | Type compte : ${accountType}
 indicateurs: RSI=${Number.isFinite(indicators.rsi) ? indicators.rsi.toFixed(2) : 'NA'}, MACD.hist=${Number.isFinite(indicators?.macd?.hist) ? indicators.macd.hist.toFixed(5) : 'NA'}, Stoch RSI=${Number.isFinite(indicators.stochRsi?.k) ? indicators.stochRsi.k.toFixed(1) : 'NA'}, Williams %R=${Number.isFinite(indicators.williamsR) ? indicators.williamsR.toFixed(1) : 'NA'}, Ichimoku=${indicators.ichimoku?.aboveCloud ? 'au-dessus nuage' : 'sous nuage'}${indicators.candlestickPattern?.name ? `, Pattern chandelier=${indicators.candlestickPattern.name} (${indicators.candlestickPattern.bullish ? 'haussiere' : 'baissiere'})` : ''}
 direction recommandee=${conf.recommendation}
 checklist validee=${conf.checksPassed}/${conf.checksTotal}
@@ -1727,6 +1851,90 @@ Maximum 5 lignes.`
             </div>
           ))}
         </div>
+      </div>
+
+      <div className={`position-panel position-panel--risk-${riskTier}`}>
+        <div className="signals-title syne">Gestion de position</div>
+        <div className="position-inputs">
+          <label className="position-field">
+            <span className="position-label">Mon capital (€)</span>
+            <input
+              type="number"
+              min={1}
+              step={100}
+              className="position-input mono"
+              value={capital}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value)
+                setCapital(Number.isFinite(v) && v > 0 ? v : capital)
+              }}
+            />
+          </label>
+          <label className="position-field">
+            <span className="position-label">Risque max par trade (%)</span>
+            <input
+              type="number"
+              min={0.1}
+              step={0.1}
+              className="position-input mono"
+              value={riskPct}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value)
+                setRiskPct(Number.isFinite(v) && v > 0 ? v : riskPct)
+              }}
+            />
+          </label>
+          <label className="position-field">
+            <span className="position-label">Type de compte</span>
+            <select
+              className="position-input position-select mono"
+              value={accountType}
+              onChange={(e) => setAccountType(e.target.value)}
+            >
+              <option value="Standard">Standard</option>
+              <option value="Mini">Mini</option>
+              <option value="Micro">Micro</option>
+            </select>
+          </label>
+        </div>
+
+        {positionSizing ? (
+          <div className="position-summary mono">
+            <div className="position-line">
+              💰 Capital : {Math.round(capital).toLocaleString('fr-FR')}€
+            </div>
+            <div className="position-line">
+              ⚠️ Risque max : {riskPct}% = {Math.round(positionSizing.montantRisque).toLocaleString('fr-FR')}€
+            </div>
+            <div className="position-line">
+              📏 Distance SL : {positionSizing.distanceSlPct.toFixed(2)}%
+            </div>
+            <div className="position-line">
+              📊 Taille position : {Math.round(positionSizing.taillePosition).toLocaleString('fr-FR')}€
+            </div>
+            <div className="position-line">
+              📈 Lots recommandés : {positionSizing.lotsRecommended.toFixed(2)}
+              {item.category === 'Forex' && (
+                <span className="position-forex-hint">
+                  {' '}
+                  (≈ {positionSizing.forexLotsEquivalent.toFixed(4)} lot(s) {accountType})
+                </span>
+              )}
+            </div>
+            <div className="position-line">
+              💵 Exposition totale : {Math.round(positionSizing.taillePosition).toLocaleString('fr-FR')}€
+            </div>
+            {positionSizing.tooLarge && (
+              <div className="position-warning" role="alert">
+                ⚠️ Position trop grande — réduisez votre risque (exposition {'>'} 20 % du capital).
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="position-summary position-summary--empty mono">
+            Impossible de calculer (entrée = stop loss ou données invalides).
+          </div>
+        )}
       </div>
 
       <div className="ai-actions">
