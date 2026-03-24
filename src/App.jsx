@@ -11,6 +11,8 @@ const CLAUDE_MODEL = 'claude-haiku-4-5-20251001'
 const TELEGRAM_COOLDOWN_MS = 30 * 60 * 1000
 const LS_TELEGRAM_ALERTS = 'scanner-pro-telegram-alerts'
 const LS_TELEGRAM_LAST = 'scanner-pro-telegram-last-alert'
+const LS_CALENDAR_CACHE = 'scanner-pro-calendar-cache'
+const CALENDAR_CLIENT_TTL_MS = 60 * 60 * 1000
 
 const FILTERS = ['Tous', 'Crypto', 'Forex', 'Indices', 'Matières', '🔥 Signaux forts']
 const STRONG_SIGNAL_FILTER = '🔥 Signaux forts'
@@ -1613,27 +1615,74 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false
-    async function loadNewsCal() {
+    async function loadNews() {
       try {
-        const [newsRes, calRes] = await Promise.all([fetch('/api/news'), fetch('/api/calendar')])
+        const newsRes = await fetch('/api/news')
         const newsJson = await newsRes.json().catch(() => ({}))
-        const calJson = await calRes.json().catch(() => ({}))
         if (cancelled) return
         setNewsError(newsJson.ok === false && newsJson.error ? newsJson.error : null)
-        setCalendarError(calJson.ok === false && calJson.error ? calJson.error : null)
         if (newsJson.ok && Array.isArray(newsJson.articles)) setNewsArticles(newsJson.articles)
         else if (!newsJson.ok) setNewsArticles([])
-        if (calJson.ok && Array.isArray(calJson.events)) setCalendarEvents(calJson.events)
-        else if (!calJson.ok) setCalendarEvents([])
       } catch {
-        if (!cancelled) {
-          setNewsError('Erreur reseau')
-          setCalendarError('Erreur reseau')
-        }
+        if (!cancelled) setNewsError('Erreur reseau')
       }
     }
-    loadNewsCal()
-    const id = window.setInterval(loadNewsCal, 5 * 60 * 1000)
+    loadNews()
+    const id = window.setInterval(loadNews, 5 * 60 * 1000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    function readCalendarCache() {
+      try {
+        const raw = localStorage.getItem(LS_CALENDAR_CACHE)
+        if (!raw) return null
+        const parsed = JSON.parse(raw)
+        if (!parsed || typeof parsed.ts !== 'number' || !Array.isArray(parsed.events)) return null
+        if (Date.now() - parsed.ts >= CALENDAR_CLIENT_TTL_MS) return null
+        return parsed
+      } catch {
+        return null
+      }
+    }
+
+    function writeCalendarCache(events) {
+      try {
+        localStorage.setItem(LS_CALENDAR_CACHE, JSON.stringify({ ts: Date.now(), events }))
+      } catch {
+        /* ignore */
+      }
+    }
+
+    async function fetchCalendar() {
+      try {
+        const calRes = await fetch('/api/calendar')
+        const calJson = await calRes.json().catch(() => ({}))
+        if (cancelled) return
+        setCalendarError(calJson.ok === false && calJson.error ? calJson.error : null)
+        if (calJson.ok && Array.isArray(calJson.events)) {
+          setCalendarEvents(calJson.events)
+          writeCalendarCache(calJson.events)
+        } else if (!calJson.ok) setCalendarEvents([])
+      } catch {
+        if (!cancelled) setCalendarError('Erreur reseau')
+      }
+    }
+
+    const cached = readCalendarCache()
+    if (cached) {
+      setCalendarEvents(cached.events)
+      setCalendarError(null)
+    } else {
+      fetchCalendar()
+    }
+
+    const id = window.setInterval(fetchCalendar, CALENDAR_CLIENT_TTL_MS)
     return () => {
       cancelled = true
       window.clearInterval(id)
