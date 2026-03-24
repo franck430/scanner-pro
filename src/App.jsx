@@ -1743,7 +1743,7 @@ function SignalIdealPanel({
       accountType,
     )
     const posLine = posForPrompt
-      ? `Capital : ${Math.round(capital)}€ | Risque : ${riskPct}% | Lots recommandés : ${posForPrompt.lotsRecommended.toFixed(2)}`
+      ? `Capital : ${Math.round(capital)}€ | Risque : ${riskPct}% | Lots recommandés : ${posForPrompt.lotsRecommended.toFixed(4)}`
       : `Capital : ${Math.round(capital)}€ | Risque : ${riskPct}% | Lots recommandés : N/A (distance SL invalide)`
     const prompt = `Tu es un expert en trading. Analyse ces données techniques et donne un avis concis en français :
 actif=${item.label}
@@ -1913,7 +1913,7 @@ Maximum 5 lignes.`
               📊 Taille position : {Math.round(positionSizing.taillePosition).toLocaleString('fr-FR')}€
             </div>
             <div className="position-line">
-              📈 Lots recommandés : {positionSizing.lotsRecommended.toFixed(2)}
+              📈 Lots recommandés : {positionSizing.lotsRecommended.toFixed(4)}
               {item.category === 'Forex' && (
                 <span className="position-forex-hint">
                   {' '}
