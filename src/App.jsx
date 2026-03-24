@@ -132,30 +132,119 @@ async function sendTelegramTestAlert(text) {
 }
 
 function Sparkline({ values, tone }) {
-  const w = 100
-  const h = 14
+  const w = 120
+  const h = 36
   if (!Array.isArray(values) || values.length < 2) return null
 
   const min = Math.min(...values)
   const max = Math.max(...values)
   const span = max - min || 1
 
-  const pts = values
-    .map((v, i) => {
-      const x = (i / (values.length - 1)) * w
-      const y = h - ((v - min) / span) * h
-      return `${x.toFixed(2)},${y.toFixed(2)}`
-    })
-    .join(' ')
+  const pts = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * w
+    const y = h - 4 - ((v - min) / span) * (h - 8)
+    return `${x.toFixed(2)},${y.toFixed(2)}`
+  })
+  const linePts = pts.join(' ')
+  const firstX = values.map((_, i) => (i / (values.length - 1)) * w)[0]
+  const lastX = w
+  const areaPts = `${linePts} ${lastX},${h} ${firstX},${h}`
 
+  const gid = tone === 'good' ? 'sparkGradGood' : tone === 'bad' ? 'sparkGradBad' : 'sparkGradMid'
   const stroke =
-    tone === 'good' ? 'rgba(0,229,160,0.95)' : tone === 'bad' ? 'rgba(255,61,90,0.95)' : 'rgba(255,176,32,0.95)'
+    tone === 'good' ? '#00e5a0' : tone === 'bad' ? '#ff3d5a' : '#ffb020'
 
   return (
-    <svg className="sparkline sparkline-full" width="100%" height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true">
-      <polyline points={pts} fill="none" stroke={stroke} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+    <svg
+      className="sparkline sparkline-full"
+      width="100%"
+      height={h}
+      viewBox={`0 0 ${w} ${h}`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient id="sparkGradGood" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stopColor="rgba(0,229,160,0.35)" />
+          <stop offset="100%" stopColor="rgba(0,229,160,0)" />
+        </linearGradient>
+        <linearGradient id="sparkGradBad" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stopColor="rgba(255,61,90,0.35)" />
+          <stop offset="100%" stopColor="rgba(255,61,90,0)" />
+        </linearGradient>
+        <linearGradient id="sparkGradMid" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stopColor="rgba(255,176,32,0.3)" />
+          <stop offset="100%" stopColor="rgba(255,176,32,0)" />
+        </linearGradient>
+      </defs>
+      <polygon className="sparkline-area" points={areaPts} fill={`url(#${gid})`} />
+      <polyline
+        points={linePts}
+        fill="none"
+        stroke={stroke}
+        strokeWidth="2"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        className="sparkline-line"
+      />
     </svg>
   )
+}
+
+/** Anneau de score 0–100 (TradingView / terminal style) */
+function ScoreRing({ score, size = 104, strokeWidth = 7, labelClass = '' }) {
+  const dim = size
+  const r = (dim - strokeWidth) / 2 - 1
+  const c = 2 * Math.PI * r
+  const pct = clamp(Number(score) || 0, 0, 100)
+  const offset = c * (1 - pct / 100)
+  const badge = scoreToBadgeClass(score)
+  return (
+    <svg
+      className={`score-ring-svg ${labelClass}`}
+      width={dim}
+      height={dim}
+      viewBox={`0 0 ${dim} ${dim}`}
+      aria-hidden="true"
+    >
+      <circle
+        className="score-ring-track"
+        cx={dim / 2}
+        cy={dim / 2}
+        r={r}
+        fill="none"
+        strokeWidth={strokeWidth}
+      />
+      <circle
+        className={`score-ring-progress ${badge}`}
+        cx={dim / 2}
+        cy={dim / 2}
+        r={r}
+        fill="none"
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeDasharray={c}
+        strokeDashoffset={offset}
+        transform={`rotate(-90 ${dim / 2} ${dim / 2})`}
+      />
+      <text
+        x={dim / 2}
+        y={dim / 2}
+        dominantBaseline="middle"
+        textAnchor="middle"
+        className="score-ring-label mono"
+      >
+        {Math.round(score)}
+      </text>
+    </svg>
+  )
+}
+
+function mtfBadgeClass(score) {
+  if (score == null || !Number.isFinite(score)) return 'mtf-badge--na'
+  if (score > 75) return 'mtf-badge--good'
+  if (score >= 50) return 'mtf-badge--mid'
+  return 'mtf-badge--bad'
 }
 
 function WatchlistPanel({
@@ -171,7 +260,7 @@ function WatchlistPanel({
 }) {
   return (
     <>
-      <div className="panel-title">Watchlist</div>
+      <div className="panel-title syne">Watchlist</div>
 
       <div className="filter-bar" role="tablist" aria-label="Filter watchlist">
         {FILTERS.map((f) => (
@@ -196,7 +285,6 @@ function WatchlistPanel({
           const score = typeof adj?.score === 'number' ? adj.score : null
           const mtfScores = result?.confluence?.mtfScores
 
-          const badgeClass = score == null ? 'badge--neutral' : scoreToBadgeClass(score)
           const values = (scoreHistory[item.tvSymbol] && scoreHistory[item.tvSymbol].length >= 2)
             ? scoreHistory[item.tvSymbol]
             : typeof score === 'number'
@@ -212,17 +300,32 @@ function WatchlistPanel({
               className={`watchlist-item ${isActive ? 'is-active' : ''}`}
               onClick={() => onPickSymbol(item.tvSymbol)}
             >
-              <div className="watchlist-item-top">
+              <div className="watchlist-item-head">
                 <span className="watchlist-label">{item.label}</span>
-                <span className={`score-badge ${badgeClass} ${scorePulse[item.tvSymbol] ? 'score-badge--pulse' : ''}`}>
-                  {score == null ? '—' : score}
-                </span>
+                <div
+                  className={`watchlist-score-wrap ${scorePulse[item.tvSymbol] ? 'watchlist-score-pulse' : ''}`}
+                >
+                  {score == null ? (
+                    <span className="watchlist-score-dash mono">—</span>
+                  ) : (
+                    <ScoreRing score={score} size={56} strokeWidth={5} />
+                  )}
+                </div>
               </div>
-              <span className="mtf-line">
-                {mtfScores
-                  ? `1D:${mtfScores['1D']} 4H:${mtfScores['4H']} 15m:${mtfScores['15m']}`
-                  : '1D:— 4H:— 15m:—'}
-              </span>
+              <div className="watchlist-mtf-badges">
+                {[
+                  { key: '1D', label: '1D' },
+                  { key: '4H', label: '4H' },
+                  { key: '15m', label: '15m' },
+                ].map(({ key, label }) => {
+                  const v = mtfScores?.[key]
+                  return (
+                    <span key={key} className={`mtf-badge ${mtfBadgeClass(v)}`}>
+                      {label} {v == null ? '—' : v}
+                    </span>
+                  )
+                })}
+              </div>
               <div className="watchlist-sparkline-wrap">
                 <Sparkline values={values} tone={tone} />
               </div>
@@ -305,22 +408,32 @@ function impactBadge(impact) {
   return '🟢 Low'
 }
 
+function newsCardImpactClass(impact) {
+  if (impact === 'high') return 'news-card--high'
+  if (impact === 'medium') return 'news-card--medium'
+  return 'news-card--low'
+}
+
 function NewsPanel({ articles, calendarEvents, newsError, calendarError }) {
   return (
     <div className="news-panel">
-      <div className="news-panel-title">Actualites & calendrier</div>
+      <div className="news-panel-title syne">Actualites & calendrier</div>
       <p className="panel-help news-hint">
         Bonus score : FG &lt; 25 → SHORT | FG &gt; 75 → LONG. Fear & Greed affiche dans le header.
       </p>
 
-      <div className="news-subtitle">Calendrier (NFP, CPI, FOMC, PIB…)</div>
+      <div className="news-subtitle syne">Calendrier (NFP, CPI, FOMC, PIB…)</div>
       {calendarError && <div className="news-error">{calendarError}</div>}
       {!calendarEvents?.length && !calendarError && (
         <div className="news-empty">Aucun evenement cette semaine</div>
       )}
       <ul className="news-list news-calendar">
         {(calendarEvents || []).slice(0, 6).map((e, i) => (
-          <li key={`${e.date}-${e.title}-${i}`} className="news-item">
+          <li
+            key={`${e.date}-${e.title}-${i}`}
+            className={`news-item news-card ${newsCardImpactClass(e.impact)}`}
+            style={{ animationDelay: `${i * 45}ms` }}
+          >
             <div className="news-item-title">{e.title}</div>
             <div className="news-item-meta">
               {e.displayTime || e.date} · {impactBadge(e.impact)}
@@ -329,14 +442,18 @@ function NewsPanel({ articles, calendarEvents, newsError, calendarError }) {
         ))}
       </ul>
 
-      <div className="news-subtitle">Dernieres news</div>
+      <div className="news-subtitle syne">Dernieres news</div>
       {newsError && <div className="news-error">{newsError}</div>}
       {!articles?.length && !newsError && (
         <div className="news-empty">Aucune news (ajoutez NEWS_API_KEY NewsAPI.org)</div>
       )}
       <ul className="news-list">
         {(articles || []).slice(0, 5).map((a, i) => (
-          <li key={`${a.publishedAt}-${i}`} className="news-item">
+          <li
+            key={`${a.publishedAt}-${i}`}
+            className={`news-item news-card ${newsCardImpactClass(a.impact)}`}
+            style={{ animationDelay: `${(i + 6) * 45}ms` }}
+          >
             {a.url ? (
               <a href={a.url} target="_blank" rel="noopener noreferrer" className="news-item-link">
                 {a.title}
@@ -1289,6 +1406,9 @@ function SignalIdealPanel({
   const rrPct = clamp(((rrClamped - 1.5) / (5.0 - 1.5)) * 100, 0, 100)
   const rrText = Number.isFinite(rrClamped) ? rrClamped.toFixed(2) : '—'
 
+  const slBarPct = slPct == null ? 0 : Math.min(100, (Math.abs(slPct) / 6) * 100)
+  const tpBarPct = tpPct == null ? 0 : Math.min(100, (Math.abs(tpPct) / 6) * 100)
+
   const callClaudeAnalysis = async () => {
     setAiError('')
 
@@ -1342,14 +1462,17 @@ Maximum 5 lignes.`
     }
   }
 
+  const directionPulse =
+    conf.signalTone === 'good' || conf.signalTone === 'bad' ? 'direction-pill--pulse' : ''
+
   return (
     <div className="trade-panel">
       <div className="trade-hero">
-        <div className={`direction-pill direction-pill--hero ${signalClass}`}>
+        <div className={`direction-pill direction-pill--hero ${signalClass} ${directionPulse}`}>
           {conf.signalBadge}
         </div>
-        <div className={`score-circle ${scoreToBadgeClass(conf.score)}`}>
-          <span className="score-circle-value">{conf.score}</span>
+        <div className="trade-hero-score">
+          <ScoreRing score={conf.score} size={112} strokeWidth={8} labelClass="score-ring--hero" />
         </div>
       </div>
 
@@ -1378,12 +1501,15 @@ Maximum 5 lignes.`
         </div>
       </div>
 
-      <div className="signals">
-        <div className="signals-title">Checklist</div>
-        <div className="signals-row">
+      <div className="signals signals--checklist">
+        <div className="signals-title syne">Checklist</div>
+        <div className="signals-row signals-row--checklist">
           {conf.checklist.map((c) => (
-            <div key={c.label} className={`signal-chip ${c.ok ? 'is-green' : 'is-red'}`}>
-              {c.ok ? '✅' : '❌'} {c.label}
+            <div key={c.label} className={`signal-chip signal-chip--check ${c.ok ? 'is-green' : 'is-red'}`}>
+              <span className="checklist-icon" aria-hidden="true">
+                {c.ok ? '✓' : '✕'}
+              </span>
+              <span>{c.label}</span>
             </div>
           ))}
         </div>
@@ -1396,7 +1522,10 @@ Maximum 5 lignes.`
           onClick={callClaudeAnalysis}
           disabled={aiLoading}
         >
-          {aiLoading ? 'Analyse IA en cours...' : '🤖 Analyse IA'}
+          <span className="ai-btn-glow" aria-hidden="true" />
+          <span className="ai-btn-label">
+            {aiLoading ? 'Analyse IA en cours...' : 'Analyse IA — Claude'}
+          </span>
         </button>
       </div>
 
@@ -1424,7 +1553,7 @@ Maximum 5 lignes.`
           <div className="trade-k">Résistance la plus proche</div>
           <div className="trade-v mono">{trade.resistance != null ? fmt(trade.resistance) : '—'}</div>
         </div>
-        <div className="trade-row">
+        <div className="trade-row trade-row--sltp">
           <div className="trade-k">
             Stop Loss (niveau S/R)
           </div>
@@ -1433,7 +1562,10 @@ Maximum 5 lignes.`
             {slPct == null ? '' : ` (${slPct >= 0 ? '+' : ''}${slPct.toFixed(2)}%)`}
           </div>
         </div>
-        <div className="trade-row">
+        <div className="sltp-visual-track sltp-visual-track--sl" aria-hidden="true">
+          <div className="sltp-visual-fill" style={{ width: `${slBarPct}%` }} />
+        </div>
+        <div className="trade-row trade-row--sltp">
           <div className="trade-k">
             Take Profit (niveau S/R)
           </div>
@@ -1441,6 +1573,9 @@ Maximum 5 lignes.`
             {fmt(trade.takeProfit)}
             {tpPct == null ? '' : ` (${tpPct >= 0 ? '+' : ''}${tpPct.toFixed(2)}%)`}
           </div>
+        </div>
+        <div className="sltp-visual-track sltp-visual-track--tp" aria-hidden="true">
+          <div className="sltp-visual-fill" style={{ width: `${tpBarPct}%` }} />
         </div>
       </div>
 
@@ -1539,6 +1674,12 @@ export default function App() {
     () => WATCHLIST.find((x) => x.tvSymbol === selectedTvSymbol) ?? WATCHLIST[0],
     [selectedTvSymbol],
   )
+
+  const [appReady, setAppReady] = useState(false)
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setAppReady(true))
+    return () => cancelAnimationFrame(id)
+  }, [])
 
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
@@ -2059,26 +2200,42 @@ export default function App() {
   }, [selectedTvSymbol, selectedTimeframe.id, selectedTimeframe.label, selectedTimeframe.binanceInterval, selectedTimeframe.twelveInterval, scanResults])
 
   return (
-    <div className={`scanner-app ${chartFullscreen ? 'is-fullscreen' : ''}`}>
+    <div
+      className={`scanner-app ${chartFullscreen ? 'is-fullscreen' : ''} ${appReady ? 'scanner-app--ready' : ''}`}
+    >
       <header className="scanner-header">
         <div className="brand">
-          <div className="brand-title">
-            Scanner Pro
-            <span className="brand-accent">™</span>
+          <div className="brand-logo syne" aria-hidden="true">
+            SP
           </div>
-          <div className="brand-subtitle">
-            TradingView chart + EMA/RSI/MACD/BB (scores 0-100) selon timeframe
+          <div className="brand-text">
+            <div className="brand-title syne">
+              Scanner Pro
+              <span className="brand-accent">™</span>
+            </div>
+            <div className="brand-subtitle">
+              TradingView · scores multi-TF · indicateurs temps reel
+            </div>
           </div>
         </div>
 
         <div className="header-right">
-          <div
-            className="fear-greed-pill mono"
-            title="Crypto Fear & Greed (alternative.me)"
-          >
-            {fearGreedEmoji(fearGreed?.value)} F&G{' '}
-            {fearGreed?.value != null ? `${Math.round(fearGreed.value)}` : '—'}{' '}
-            <span className="fear-greed-label">{fearGreedLabel(fearGreed?.value)}</span>
+          <div className="fear-greed-block" title="Crypto Fear & Greed (alternative.me)">
+            <div className="fear-greed-pill mono">
+              <span className="fear-greed-emoji">{fearGreedEmoji(fearGreed?.value)}</span>
+              <span className="fear-greed-num">
+                {fearGreed?.value != null ? `${Math.round(fearGreed.value)}` : '—'}
+              </span>
+              <span className="fear-greed-label">{fearGreedLabel(fearGreed?.value)}</span>
+            </div>
+            <div className="fear-greed-bar-wrap" aria-hidden="true">
+              <div
+                className="fear-greed-bar-fill"
+                style={{
+                  width: `${fearGreed?.value != null ? Math.round(clamp(fearGreed.value, 0, 100)) : 0}%`,
+                }}
+              />
+            </div>
           </div>
           <button
             type="button"
@@ -2214,7 +2371,7 @@ export default function App() {
         <section className={`panel panel-center ${chartFullscreen ? 'is-fullscreen' : ''}`}>
           <div className="panel-header">
             <div>
-              <div className="panel-title">Chart temps reel</div>
+              <div className="panel-title syne">Chart temps reel</div>
               <div className="panel-subtitle">{selectedItem.label} (TradingView)</div>
             </div>
             <div className="panel-header-right">
@@ -2259,7 +2416,7 @@ export default function App() {
         </section>
 
         <aside className={`panel panel-right ${chartFullscreen ? 'is-hidden' : ''}`}>
-          <div className="panel-title">Signal ideal</div>
+          <div className="panel-title syne">Signal ideal</div>
           <SignalIdealPanel
             item={selectedItem}
             result={selectedComputed}
