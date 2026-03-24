@@ -1,7 +1,17 @@
 /**
- * Calendrier économique — Finnhub (FINNHUB_API_KEY) ou liste vide.
- * Filtre événements US majeurs : NFP, CPI, FOMC, GDP, etc.
+ * Calendrier économique — ForexFactory (JSON public, sans clé API)
+ * https://nfs.faireconomy.media/ff_calendar_thisweek.json
  */
+
+const FF_CALENDAR_URL = 'https://nfs.faireconomy.media/ff_calendar_thisweek.json'
+
+function mapImpact(raw) {
+  const x = String(raw || '').toLowerCase()
+  if (x === 'high') return 'high'
+  if (x === 'medium') return 'medium'
+  if (x === 'holiday') return 'low'
+  return 'low'
+}
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
@@ -13,71 +23,58 @@ export default async function handler(req, res) {
     return res.status(405).json({ ok: false, error: 'Method not allowed' })
   }
 
-  const token = process.env.FINNHUB_API_KEY
-  const now = new Date()
-  const from = new Date(now)
-  from.setDate(from.getDate() - 1)
-  const to = new Date(now)
-  to.setDate(to.getDate() + 14)
-
-  const fromStr = from.toISOString().slice(0, 10)
-  const toStr = to.toISOString().slice(0, 10)
-
-  if (!token || String(token).trim() === '') {
-    return res.status(200).json({
-      ok: false,
-      events: [],
-      error: 'FINNHUB_API_KEY manquant',
-      detail: 'Optionnel : ajoutez une clé gratuite sur finnhub.io pour le calendrier réel.',
-    })
-  }
-
-  const url = `https://finnhub.io/api/v1/calendar/economic?from=${fromStr}&to=${toStr}&token=${String(token).trim()}`
-
   try {
-    const r = await fetch(url)
-    const data = await r.json()
+    const r = await fetch(FF_CALENDAR_URL, {
+      headers: { Accept: 'application/json' },
+    })
     if (!r.ok) {
       return res.status(200).json({
         ok: false,
         events: [],
-        error: `Finnhub HTTP ${r.status}`,
-        raw: data,
+        error: `Calendrier HTTP ${r.status}`,
       })
     }
 
-    const economicCalendar = data.economicCalendar || []
-    const keywords =
-      /non.?farm|nfp|cpi|consumer price|fomc|fed|interest rate|gdp|gross domestic|retail sales|unemployment/i
-
-    const filtered = economicCalendar
-      .filter((e) => {
-        const country = String(e.country || '').toUpperCase()
-        if (country !== 'US' && country !== 'EU' && country !== 'EZ') return false
-        const ev = String(e.event || e.description || '')
-        return keywords.test(ev)
+    const raw = await r.json()
+    if (!Array.isArray(raw)) {
+      return res.status(200).json({
+        ok: false,
+        events: [],
+        error: 'Format calendrier inattendu',
       })
-      .slice(0, 8)
+    }
+
+    const now = Date.now()
+    const mapped = raw
+      .filter((e) => e && String(e.impact || '').toLowerCase() !== 'holiday')
       .map((e) => {
-        const ev = String(e.event || e.description || '—')
-        const impact =
-          /non.?farm|nfp|cpi|fomc|fed decision|interest rate/i.test(ev)
-            ? 'high'
-            : /gdp|retail|unemployment/i.test(ev)
-              ? 'medium'
-              : 'low'
-        const time = e.time ? `${e.date} ${e.time}` : e.date
+        const iso = e.date
+        const ts = iso ? Date.parse(iso) : NaN
+        const impact = mapImpact(e.impact)
+        let displayTime = '—'
+        if (Number.isFinite(ts)) {
+          displayTime = new Date(ts).toLocaleString('fr-FR', {
+            dateStyle: 'short',
+            timeStyle: 'short',
+          })
+        }
         return {
-          title: ev,
+          title: e.title || '—',
           country: e.country || '—',
-          date: e.date,
-          time: e.time || null,
-          displayTime: time,
+          date: iso || null,
+          displayTime,
           impact,
+          _ts: ts,
         }
       })
+      .filter((e) => Number.isFinite(e._ts))
 
-    return res.status(200).json({ ok: true, events: filtered })
+    const sorted = mapped.sort((a, b) => a._ts - b._ts)
+    const upcoming = sorted.filter((e) => e._ts >= now)
+    const picked = (upcoming.length ? upcoming : sorted).slice(0, 12)
+    const events = picked.map(({ _ts, ...rest }) => rest)
+
+    return res.status(200).json({ ok: true, events, source: 'ff_calendar_thisweek' })
   } catch (e) {
     return res.status(502).json({
       ok: false,

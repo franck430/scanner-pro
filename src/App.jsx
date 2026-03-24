@@ -273,8 +273,13 @@ function fearGreedEmoji(value) {
 
 function parseCalendarEventTime(e) {
   if (!e?.date) return null
+  const d = String(e.date)
+  if (d.includes('T')) {
+    const t = Date.parse(d)
+    return Number.isFinite(t) ? t : null
+  }
   const time = e.time && String(e.time).trim() ? String(e.time).trim() : '12:00:00'
-  const iso = `${e.date}T${time.length <= 5 ? `${time}:00` : time}`
+  const iso = `${d}T${time.length <= 5 ? `${time}:00` : time}`
   const t = Date.parse(iso.endsWith('Z') ? iso : `${iso}Z`)
   return Number.isFinite(t) ? t : null
 }
@@ -309,7 +314,7 @@ function NewsPanel({ articles, calendarEvents, newsError, calendarError }) {
       <div className="news-subtitle">Calendrier (NFP, CPI, FOMC, PIB…)</div>
       {calendarError && <div className="news-error">{calendarError}</div>}
       {!calendarEvents?.length && !calendarError && (
-        <div className="news-empty">Aucun evenement (ajoutez FINNHUB_API_KEY pour le flux reel)</div>
+        <div className="news-empty">Aucun evenement cette semaine</div>
       )}
       <ul className="news-list news-calendar">
         {(calendarEvents || []).slice(0, 6).map((e, i) => (
