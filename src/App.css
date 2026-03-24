@@ -239,9 +239,9 @@ body:has(.scanner-app) {
 .scanner-header {
   flex-shrink: 0;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
   min-height: 64px;
   padding: 10px 20px;
   border-bottom: 1px solid var(--sc-border);
@@ -250,6 +250,54 @@ body:has(.scanner-app) {
   overflow: visible;
   position: relative;
   z-index: 20;
+}
+
+.header-main-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.forex-sessions-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--sc-border);
+  background: rgba(8, 12, 18, 0.55);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.forex-sessions-utc {
+  color: var(--sc-muted);
+  margin-right: 4px;
+}
+
+.forex-session-pill {
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  white-space: nowrap;
+}
+
+.forex-session-pill.is-active {
+  color: #e8fff4;
+  background: rgba(0, 229, 160, 0.14);
+  border-color: rgba(0, 229, 160, 0.45);
+}
+
+.forex-session-pill.is-inactive {
+  color: rgba(148, 163, 184, 0.75);
+  background: rgba(30, 45, 69, 0.35);
+}
+
+.forex-session-pill--overlap.is-active {
+  box-shadow: 0 0 0 1px rgba(255, 176, 32, 0.35);
 }
 
 .brand {
@@ -1021,6 +1069,45 @@ body:has(.scanner-app) {
   border: 1px solid rgba(30, 45, 69, 0.7);
 }
 
+.watchlist-spread {
+  margin-top: 6px;
+  font-size: 10px;
+  color: rgba(148, 163, 184, 0.95);
+}
+
+.forex-spread-hint {
+  margin: 6px 0 10px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  font-size: 11px;
+  color: rgba(199, 210, 254, 0.95);
+}
+
+.forex-corr-panel {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--sc-border);
+  background: rgba(8, 12, 18, 0.45);
+}
+
+.forex-corr-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: rgba(229, 231, 235, 0.85);
+}
+
+.forex-corr-warn {
+  margin-top: 10px;
+  font-size: 11px;
+  color: rgba(251, 191, 36, 0.95);
+  line-height: 1.45;
+}
+
 .sparkline-full {
   display: block;
   width: 100%;
@@ -1088,6 +1175,14 @@ body:has(.scanner-app) {
 .score-ring-svg.score-ring--hero .score-ring-label {
   font-size: 28px;
   font-weight: 800;
+}
+
+.filter-btn--session {
+  border-style: dashed;
+}
+
+.filter-btn--session.is-active {
+  border-style: solid;
 }
 
 .filter-bar {

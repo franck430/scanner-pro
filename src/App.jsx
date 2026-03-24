@@ -49,6 +49,20 @@ const LS_FAVORITES = 'scanner-pro-favorites'
 /** Unités de base par lot forex (MT4) selon type de compte */
 const FOREX_LOT_UNITS = { Standard: 100000, Mini: 10000, Micro: 1000 }
 
+/** Spread indicatif (pips) — majors / croisées / exotiques */
+const FOREX_TYPICAL_SPREAD_PIPS = {
+  'EUR/USD': 1,
+  'GBP/USD': 1.5,
+  'USD/JPY': 1,
+  'AUD/USD': 1,
+  'USD/CHF': 1.5,
+  'NZD/USD': 1.5,
+  'USD/CAD': 1.5,
+  'EUR/GBP': 3,
+  'EUR/JPY': 2,
+  'GBP/JPY': 2,
+}
+
 const FAVORITES_FILTER = '⭐ Favoris'
 const FILTERS = ['Tous', FAVORITES_FILTER, 'Crypto', 'Forex', 'Matières', '🔥 Signaux forts']
 const STRONG_SIGNAL_FILTER = '🔥 Signaux forts'
@@ -301,6 +315,8 @@ function WatchlistPanel({
   macroContext,
   favoriteSymbols,
   onToggleFavorite,
+  forexSessionFilter,
+  onToggleForexSessionFilter,
 }) {
   const favoriteSet = useMemo(() => new Set(favoriteSymbols), [favoriteSymbols])
 
@@ -390,6 +406,11 @@ function WatchlistPanel({
           <div className="watchlist-sparkline-wrap">
             <Sparkline values={values} tone={tone} />
           </div>
+          {item.category === 'Forex' && (
+            <div className="watchlist-spread mono">
+              Spread typ. ~{getForexTypicalSpreadPips(item.label)} pip(s)
+            </div>
+          )}
         </div>
       </div>
     )
@@ -410,6 +431,14 @@ function WatchlistPanel({
             {f}
           </button>
         ))}
+        <button
+          type="button"
+          className={`filter-btn filter-btn--session ${forexSessionFilter ? 'is-active' : ''}`}
+          onClick={onToggleForexSessionFilter}
+          title="Prioriser les paires Forex selon la session UTC (Tokyo→JPY, Londres→EUR/GBP, NY→USD)"
+        >
+          🕐 Filtrer par session
+        </button>
       </div>
 
       <div className="watchlist">
@@ -438,13 +467,82 @@ function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n))
 }
 
+function getForexTypicalSpreadPips(label) {
+  return FOREX_TYPICAL_SPREAD_PIPS[label] ?? 5
+}
+
+function getForexPipSize(item) {
+  if (item?.category !== 'Forex') return null
+  return item.label.includes('JPY') ? 0.01 : 0.0001
+}
+
+function forexPipsFromEntry(entry, price, item) {
+  const pip = getForexPipSize(item)
+  if (pip == null || !Number.isFinite(entry) || entry === 0 || !Number.isFinite(price)) return null
+  return (price - entry) / pip
+}
+
+function getForexPipValueUsdPerStandardLot(entry, item) {
+  const pip = getForexPipSize(item)
+  if (pip == null || !Number.isFinite(entry) || entry <= 0) return null
+  if (item.label.includes('JPY')) {
+    return (100000 * pip) / entry
+  }
+  return 100000 * pip
+}
+
+/**
+ * Forex : lots standard = risque$ / (pips × valeur pip $ par lot standard).
+ * Valeur pip ≈ 10 $/pip/lot pour paires USD quote ; JPY : (100k×0,01)/cours.
+ */
+function computePositionSizingForex(capital, riskPct, entry, stopLoss, accountType, item) {
+  const pipSize = getForexPipSize(item)
+  const e = Number(entry)
+  const sl = Number(stopLoss)
+  const cap = Number(capital)
+  const r = Number(riskPct)
+  if (pipSize == null || !Number.isFinite(e) || e <= 0 || !Number.isFinite(sl) || !Number.isFinite(cap) || cap <= 0) {
+    return null
+  }
+  if (!Number.isFinite(r) || r <= 0) return null
+  const riskPips = Math.abs(e - sl) / pipSize
+  if (riskPips <= 0 || !Number.isFinite(riskPips)) return null
+  const pipValueUsd = getForexPipValueUsdPerStandardLot(e, item)
+  if (pipValueUsd == null || pipValueUsd <= 0) return null
+  const montantRisque = cap * (r / 100)
+  const lotsStandard = montantRisque / (riskPips * pipValueUsd)
+  const d = Math.abs(e - sl) / e
+  const distanceSlPct = d * 100
+  const taillePosition = montantRisque / d
+  const lotUnits = FOREX_LOT_UNITS[accountType] ?? FOREX_LOT_UNITS.Standard
+  const lotsRecommended = lotsStandard * (100000 / lotUnits)
+  const forexLotsEquivalent = lotsStandard
+  const exposurePctOfCapital = (taillePosition / cap) * 100
+  const tooLarge = taillePosition > cap * 0.2
+  return {
+    montantRisque,
+    distanceSlPct,
+    distanceSlPips: riskPips,
+    pipValueUsdPerLot: pipValueUsd,
+    taillePosition,
+    lotsRecommended,
+    forexLotsEquivalent,
+    exposurePctOfCapital,
+    tooLarge,
+    isForexSizing: true,
+  }
+}
+
 /**
  * Montant risqué = capital × risque%
  * Distance SL = |entrée − SL| / entrée (fraction)
  * Taille position (€) = montant risqué / distance SL
  * Lots recommandés = taille position / prix entrée (unités d’actif)
  */
-function computePositionSizing(capital, riskPct, entry, stopLoss, accountType) {
+function computePositionSizing(capital, riskPct, entry, stopLoss, accountType, item) {
+  if (item?.category === 'Forex') {
+    return computePositionSizingForex(capital, riskPct, entry, stopLoss, accountType, item)
+  }
   const e = Number(entry)
   const sl = Number(stopLoss)
   const cap = Number(capital)
@@ -478,6 +576,74 @@ function positionRiskTier(riskPct) {
   if (x < 1) return 'green'
   if (x <= 2) return 'orange'
   return 'red'
+}
+
+function utcMinuteTotal(d) {
+  return d.getUTCHours() * 60 + d.getUTCMinutes()
+}
+
+/** Tri watchlist Forex : priorité selon session UTC (Tokyo→JPY, Londres→EUR/GBP/AUD/NZD, NY→USD, 13–17 UTC chevauchement). */
+function forexSessionSortRank(label, utcMin) {
+  const hasJPY = label.includes('JPY')
+  const isUsdPair =
+    label.endsWith('/USD') ||
+    label.startsWith('USD/') ||
+    (label.includes('USD') && !hasJPY)
+  const isLondonPriority =
+    label.includes('EUR') ||
+    label.includes('GBP') ||
+    label.includes('AUD') ||
+    label.includes('NZD')
+
+  if (utcMin >= 780 && utcMin < 1020) return 0
+  if (utcMin >= 0 && utcMin < 540) return hasJPY ? 0 : 2
+  if (utcMin >= 540 && utcMin < 780) return isLondonPriority ? 0 : 2
+  if (utcMin >= 1020 && utcMin < 1320) return isUsdPair ? 0 : 2
+  return hasJPY ? 0 : 2
+}
+
+function ForexSessionsBar({ now }) {
+  const t = utcMinuteTotal(now)
+  const tok = t >= 0 && t < 540
+  const lon = t >= 480 && t < 1020
+  const ny = t >= 780 && t < 1320
+  const ov = t >= 780 && t < 1020
+  return (
+    <div className="forex-sessions-bar" role="status" aria-label="Sessions Forex UTC">
+      <span className="forex-sessions-utc mono">UTC {now.toISOString().slice(11, 16)}</span>
+      <span className={`forex-session-pill ${tok ? 'is-active' : 'is-inactive'}`} title="Tokyo 00:00–09:00 UTC">
+        🌏 Tokyo 00–09h
+      </span>
+      <span className={`forex-session-pill ${lon ? 'is-active' : 'is-inactive'}`} title="Londres 08:00–17:00 UTC">
+        🌍 Londres 08–17h
+      </span>
+      <span className={`forex-session-pill ${ny ? 'is-active' : 'is-inactive'}`} title="New York 13:00–22:00 UTC">
+        🌎 New York 13–22h
+      </span>
+      <span
+        className={`forex-session-pill forex-session-pill--overlap ${ov ? 'is-active' : 'is-inactive'}`}
+        title="Chevauchement Londres / NY — meilleure liquidité"
+      >
+        ⭐ Londres/NY 13–17h
+      </span>
+    </div>
+  )
+}
+
+function ForexCorrelationsPanel() {
+  return (
+    <div className="forex-corr-panel">
+      <div className="signals-title syne">Corrélations Forex (réf.)</div>
+      <ul className="forex-corr-list mono">
+        <li>EUR/USD ↔ GBP/USD : ~+0,85 (positive)</li>
+        <li>EUR/USD ↔ USD/CHF : ~−0,90 (négative)</li>
+        <li>USD/JPY ↔ USD/CHF : ~+0,75 (positive)</li>
+      </ul>
+      <div className="forex-corr-warn" role="note">
+        ⚠️ Attention : paires corrélées = risque doublé
+      </div>
+    </div>
+  )
 }
 
 function readPositionCapital() {
@@ -2258,8 +2424,8 @@ function SignalIdealPanel({
   const positionSizing = useMemo(() => {
     const t = result?.confluence?.trade
     if (!t) return null
-    return computePositionSizing(capital, riskPct, t.entry, t.stopLoss, accountType)
-  }, [result, capital, riskPct, accountType])
+    return computePositionSizing(capital, riskPct, t.entry, t.stopLoss, accountType, item)
+  }, [result, capital, riskPct, accountType, item])
 
   const riskTier = useMemo(() => positionRiskTier(riskPct), [riskPct])
 
@@ -2304,14 +2470,26 @@ function SignalIdealPanel({
 
   const slPct = pctFromEntry(trade.stopLoss)
   const tpPct = pctFromEntry(trade.takeProfit)
+  const slPips = item.category === 'Forex' ? forexPipsFromEntry(trade.entry, trade.stopLoss, item) : null
+  const tpPips = item.category === 'Forex' ? forexPipsFromEntry(trade.entry, trade.takeProfit, item) : null
 
   const rrRaw = Number(trade.rr)
   const rrClamped = clamp(rrRaw, 1.5, 5.0)
   const rrPct = clamp(((rrClamped - 1.5) / (5.0 - 1.5)) * 100, 0, 100)
   const rrText = Number.isFinite(rrClamped) ? rrClamped.toFixed(2) : '—'
 
-  const slBarPct = slPct == null ? 0 : Math.min(100, (Math.abs(slPct) / 6) * 100)
-  const tpBarPct = tpPct == null ? 0 : Math.min(100, (Math.abs(tpPct) / 6) * 100)
+  const slBarPct =
+    slPips != null
+      ? Math.min(100, (Math.abs(slPips) / 50) * 100)
+      : slPct == null
+        ? 0
+        : Math.min(100, (Math.abs(slPct) / 6) * 100)
+  const tpBarPct =
+    tpPips != null
+      ? Math.min(100, (Math.abs(tpPips) / 80) * 100)
+      : tpPct == null
+        ? 0
+        : Math.min(100, (Math.abs(tpPct) / 6) * 100)
 
   const callClaudeAnalysis = async () => {
     setAiError('')
@@ -2333,6 +2511,7 @@ function SignalIdealPanel({
       trade.entry,
       trade.stopLoss,
       accountType,
+      item,
     )
     const posLine = posForPrompt
       ? `Capital : ${Math.round(capital)}€ | Risque : ${riskPct}% | Lots recommandés : ${posForPrompt.lotsRecommended.toFixed(4)}`
@@ -2398,6 +2577,12 @@ Maximum 5 lignes.`
 
       <div className="panel-help">{conf.label}</div>
 
+      {item.category === 'Forex' && (
+        <div className="forex-spread-hint mono">
+          Spread typique : ~{getForexTypicalSpreadPips(item.label)} pip(s)
+        </div>
+      )}
+
       {conf.macroWarning && (
         <div className="macro-warning-banner" role="alert">
           Evenement macro imminent — attention au trade
@@ -2444,6 +2629,8 @@ Maximum 5 lignes.`
           ))}
         </div>
       </div>
+
+      {item.category === 'Forex' && <ForexCorrelationsPanel />}
 
       <div className={`position-panel position-panel--risk-${riskTier}`}>
         <div className="signals-title syne">Gestion de position</div>
@@ -2499,8 +2686,20 @@ Maximum 5 lignes.`
               ⚠️ Risque max : {riskPct}% = {Math.round(positionSizing.montantRisque).toLocaleString('fr-FR')}€
             </div>
             <div className="position-line">
-              📏 Distance SL : {positionSizing.distanceSlPct.toFixed(2)}%
+              📏 Distance SL :{' '}
+              {positionSizing.isForexSizing && positionSizing.distanceSlPips != null ? (
+                <>
+                  {positionSizing.distanceSlPips.toFixed(1)} pips (~{positionSizing.distanceSlPct.toFixed(2)}%)
+                </>
+              ) : (
+                <>{positionSizing.distanceSlPct.toFixed(2)}%</>
+              )}
             </div>
+            {positionSizing.isForexSizing && positionSizing.pipValueUsdPerLot != null && (
+              <div className="position-line">
+                💵 Valeur pip (lot std. 1,0) : ~{positionSizing.pipValueUsdPerLot.toFixed(2)} $ (réf.)
+              </div>
+            )}
             <div className="position-line">
               📊 Taille position : {Math.round(positionSizing.taillePosition).toLocaleString('fr-FR')}€
             </div>
@@ -2573,7 +2772,11 @@ Maximum 5 lignes.`
           </div>
           <div className="trade-v mono stop">
             {fmt(trade.stopLoss)}
-            {slPct == null ? '' : ` (${slPct >= 0 ? '+' : ''}${slPct.toFixed(2)}%)`}
+            {slPips != null
+              ? ` (${slPips >= 0 ? '+' : ''}${Math.round(slPips)} pips)`
+              : slPct == null
+                ? ''
+                : ` (${slPct >= 0 ? '+' : ''}${slPct.toFixed(2)}%)`}
           </div>
         </div>
         <div className="sltp-visual-track sltp-visual-track--sl" aria-hidden="true">
@@ -2585,7 +2788,11 @@ Maximum 5 lignes.`
           </div>
           <div className="trade-v mono take">
             {fmt(trade.takeProfit)}
-            {tpPct == null ? '' : ` (${tpPct >= 0 ? '+' : ''}${tpPct.toFixed(2)}%)`}
+            {tpPips != null
+              ? ` (${tpPips >= 0 ? '+' : ''}${Math.round(tpPips)} pips)`
+              : tpPct == null
+                ? ''
+                : ` (${tpPct >= 0 ? '+' : ''}${tpPct.toFixed(2)}%)`}
           </div>
         </div>
         <div className="sltp-visual-track sltp-visual-track--tp" aria-hidden="true">
@@ -2668,6 +2875,7 @@ Maximum 5 lignes.`
 
 export default function App() {
   const [filter, setFilter] = useState('Tous')
+  const [forexSessionFilter, setForexSessionFilter] = useState(false)
   const [favoriteSymbols, setFavoriteSymbols] = useState(() => readFavoritesFromStorage())
 
   useEffect(() => {
@@ -2930,15 +3138,27 @@ export default function App() {
   }, [])
 
   const visibleItems = useMemo(() => {
-    if (filter !== STRONG_SIGNAL_FILTER) return categoryItems
-    return WATCHLIST.filter((item) => {
-      const raw = scanResults[item.tvSymbol]?.confluence
-      if (!raw) return false
-      const conf = applyMacroToConfluence(raw, macroContext)
-      if (!conf) return false
-      return conf.score > 75 && conf.trade.rr > 2 && conf.alignedCount >= 2
-    })
-  }, [filter, categoryItems, scanResults, macroContext])
+    let list =
+      filter !== STRONG_SIGNAL_FILTER
+        ? categoryItems
+        : WATCHLIST.filter((item) => {
+            const raw = scanResults[item.tvSymbol]?.confluence
+            if (!raw) return false
+            const conf = applyMacroToConfluence(raw, macroContext)
+            if (!conf) return false
+            return conf.score > 75 && conf.trade.rr > 2 && conf.alignedCount >= 2
+          })
+    if (forexSessionFilter) {
+      const utcMin = utcMinuteTotal(now)
+      list = [...list].sort((a, b) => {
+        const ar = a.category === 'Forex' ? forexSessionSortRank(a.label, utcMin) : 100
+        const br = b.category === 'Forex' ? forexSessionSortRank(b.label, utcMin) : 100
+        if (ar !== br) return ar - br
+        return a.label.localeCompare(b.label)
+      })
+    }
+    return list
+  }, [filter, categoryItems, scanResults, macroContext, forexSessionFilter, now])
 
   // Keep selected symbol valid when switching filters.
   useEffect(() => {
@@ -3281,6 +3501,7 @@ export default function App() {
       className={`scanner-app ${chartFullscreen ? 'is-fullscreen' : ''} ${appReady ? 'scanner-app--ready' : ''}`}
     >
       <header className="scanner-header">
+        <div className="header-main-row">
         <div className="brand">
           <div className="brand-logo syne" aria-hidden="true">
             SP
@@ -3394,6 +3615,8 @@ export default function App() {
             LIVE
           </div>
         </div>
+        </div>
+        <ForexSessionsBar now={now} />
       </header>
 
       <button
@@ -3420,6 +3643,8 @@ export default function App() {
             macroContext={macroContext}
             favoriteSymbols={favoriteSymbols}
             onToggleFavorite={toggleFavorite}
+            forexSessionFilter={forexSessionFilter}
+            onToggleForexSessionFilter={() => setForexSessionFilter((v) => !v)}
           />
           <NewsPanel
             articles={newsArticles}
@@ -3462,6 +3687,8 @@ export default function App() {
                 macroContext={macroContext}
                 favoriteSymbols={favoriteSymbols}
                 onToggleFavorite={toggleFavorite}
+                forexSessionFilter={forexSessionFilter}
+                onToggleForexSessionFilter={() => setForexSessionFilter((v) => !v)}
               />
             </div>
           </div>
