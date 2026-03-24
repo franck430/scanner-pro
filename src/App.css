@@ -1510,6 +1510,16 @@ body:has(.scanner-app) {
   color: #ff8a9a;
 }
 
+.backtest-fetch-log {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(0, 229, 160, 0.08);
+  border: 1px solid rgba(0, 229, 160, 0.25);
+  color: rgba(200, 255, 230, 0.98);
+  font-weight: 700;
+}
+
 .backtest-block {
   font-size: 13px;
   line-height: 1.65;

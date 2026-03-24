@@ -7,9 +7,12 @@ const TWELVE_DATA_LIMIT = 100
 const BACKTEST_BARS = 1000
 /** Bougies 15m avant la fenêtre (EMA50, indicateurs). */
 const BACKTEST_WARMUP_BARS = 80
+/** Minimum de bougies 15m à récupérer (warmup + fenêtre backtest). */
 const BACKTEST_15M_REQUIRED = BACKTEST_WARMUP_BARS + BACKTEST_BARS
 const BINANCE_KLINE_MAX = 1000
 const BACKTEST_FETCH_LIMIT = 1000
+/** Libellés UI (doit rester aligné avec BACKTEST_BARS / BACKTEST_15M_REQUIRED). */
+const BACKTEST_TITLE_LABEL = '1000 bougies 15m (~10 j)'
 const SCORE_HISTORY_LEN = 24
 const TWELVE_DATA_KEY = import.meta.env.VITE_TWELVE_DATA_KEY
 const CLAUDE_MODEL = 'claude-haiku-4-5-20251001'
@@ -1415,6 +1418,7 @@ async function fetchBacktestMtfCandles(item) {
   const out = { m15: [], h4: [], d1: [] }
   const twelve15mSize = Math.min(5000, Math.max(BACKTEST_FETCH_LIMIT, BACKTEST_15M_REQUIRED))
   if (item.binanceSymbol) {
+    // 15m : pagination Binance (max 1000 / appel), pas fetchBinanceKlines simple
     const [m15, h4, d1] = await Promise.all([
       fetchBinanceKlinesMinimum(item.binanceSymbol, '15m', BACKTEST_15M_REQUIRED),
       fetchBinanceKlines(item.binanceSymbol, '4h', BACKTEST_FETCH_LIMIT),
@@ -1639,6 +1643,8 @@ function runBacktestOnCandles(m15, h4, d1) {
       candlesAnalyzed: BACKTEST_BARS,
       periodDaysCovered,
       lowTradeSample: total < 30,
+      m15BarsReceived: m15.length,
+      m15BarsRequested: BACKTEST_15M_REQUIRED,
     },
     equityCurve: curve,
   }
@@ -1761,7 +1767,7 @@ function BacktestPanel({ open, onClose, item, loading, error, data, onExportCsv 
       <div className="backtest-modal" onClick={(e) => e.stopPropagation()}>
         <div className="backtest-modal-head">
           <h2 id="backtest-title" className="backtest-title syne">
-            📊 Backtest {item.label} — {BACKTEST_BARS} bougies 15m (~10 j)
+            📊 Backtest {item.label} — {BACKTEST_TITLE_LABEL}
           </h2>
           <button type="button" className="backtest-close" onClick={onClose} aria-label="Fermer">
             ✕
@@ -1777,6 +1783,10 @@ function BacktestPanel({ open, onClose, item, loading, error, data, onExportCsv 
               <div className="backtest-block mono">
                 <div>
                   ⏱ Période : du {fmtDate(data.periodStart)} au {fmtDate(data.periodEnd)}
+                </div>
+                <div className="backtest-fetch-log">
+                  📡 Bougies récupérées : {s.m15BarsReceived ?? '—'} / {s.m15BarsRequested ?? BACKTEST_15M_REQUIRED}{' '}
+                  demandées
                 </div>
                 <div>📏 Bougies analysées : {s.candlesAnalyzed ?? BACKTEST_BARS}</div>
                 <div>
@@ -3341,7 +3351,7 @@ export default function App() {
             type="button"
             className="backtest-header-btn desktop-only"
             onClick={() => setBacktestOpen(true)}
-            title="Backtest : 1000 bougies 15m (~10 j), score confluence comme le scanner"
+            title={`Backtest : ${BACKTEST_TITLE_LABEL}, score confluence comme le scanner`}
           >
             📊 Backtest
           </button>
@@ -3356,7 +3366,7 @@ export default function App() {
         type="button"
         className="backtest-fab"
         onClick={() => setBacktestOpen(true)}
-        title="Backtest : 1000 bougies 15m (~10 j)"
+        title={`Backtest : ${BACKTEST_TITLE_LABEL}`}
         aria-label="Ouvrir le backtest"
       >
         📊 Backtest
