@@ -3206,14 +3206,6 @@ export default function App() {
         </div>
 
         <div className="header-right">
-          <button
-            type="button"
-            className="backtest-header-btn"
-            onClick={() => setBacktestOpen(true)}
-            title="Backtest : 200 bougies 15m, score confluence comme le scanner"
-          >
-            📊 Backtest
-          </button>
           <div className="fear-greed-block" title="Crypto Fear & Greed (alternative.me)">
             <div className="fear-greed-pill mono">
               <span className="fear-greed-emoji">{fearGreedEmoji(fearGreed?.value)}</span>
@@ -3298,12 +3290,30 @@ export default function App() {
             ☰
           </button>
           <div className="clock mono">{formatClock(now)}</div>
+          <button
+            type="button"
+            className="backtest-header-btn desktop-only"
+            onClick={() => setBacktestOpen(true)}
+            title="Backtest : 200 bougies 15m, score confluence comme le scanner"
+          >
+            📊 Backtest
+          </button>
           <div className="live-pill">
             <span className="live-dot" />
             LIVE
           </div>
         </div>
       </header>
+
+      <button
+        type="button"
+        className="backtest-fab"
+        onClick={() => setBacktestOpen(true)}
+        title="Backtest : 200 bougies 15m"
+        aria-label="Ouvrir le backtest"
+      >
+        📊 Backtest
+      </button>
 
       <main className="scanner-grid">
         <aside className={`panel panel-left desktop-only ${chartFullscreen ? 'is-hidden' : ''}`}>

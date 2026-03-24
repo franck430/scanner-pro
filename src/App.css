@@ -247,6 +247,9 @@ body:has(.scanner-app) {
   border-bottom: 1px solid var(--sc-border);
   background: rgba(13, 20, 32, 0.92);
   backdrop-filter: blur(12px);
+  overflow: visible;
+  position: relative;
+  z-index: 20;
 }
 
 .brand {
@@ -297,6 +300,13 @@ body:has(.scanner-app) {
   align-items: center;
   justify-content: flex-end;
   gap: 10px 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
 }
 
 .telegram-toggle {
@@ -1358,22 +1368,71 @@ body:has(.scanner-app) {
 }
 
 .backtest-header-btn {
-  padding: 8px 14px;
-  border-radius: 14px;
-  border: 1px solid rgba(99, 102, 241, 0.45);
-  background: rgba(99, 102, 241, 0.12);
-  color: rgba(229, 231, 235, 0.95);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: linear-gradient(180deg, #00c853 0%, #009624 100%);
+  color: #ffffff;
   cursor: pointer;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 800;
   font-family: 'JetBrains Mono', ui-monospace, monospace;
-  transition: border-color 0.2s ease, background 0.2s ease;
   white-space: nowrap;
+  flex-shrink: 0;
+  box-shadow: 0 2px 14px rgba(0, 180, 70, 0.45);
+  transition: filter 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
 }
 
 .backtest-header-btn:hover {
-  border-color: rgba(129, 140, 248, 0.65);
-  background: rgba(99, 102, 241, 0.2);
+  filter: brightness(1.08);
+  box-shadow: 0 4px 18px rgba(0, 200, 90, 0.55);
+}
+
+.backtest-header-btn:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+/* Fixe bas-droite : visible sur mobile / petites largeurs (header souvent surchargé) */
+.backtest-fab {
+  position: fixed;
+  bottom: 22px;
+  right: 18px;
+  z-index: 90;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 14px 18px;
+  border-radius: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  background: linear-gradient(180deg, #00c853 0%, #009624 100%);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 800;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  cursor: pointer;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45), 0 2px 14px rgba(0, 180, 70, 0.5);
+  white-space: nowrap;
+}
+
+.backtest-fab:hover {
+  filter: brightness(1.08);
+}
+
+.backtest-fab:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 3px;
+}
+
+@media (max-width: 720px) {
+  .backtest-fab {
+    display: inline-flex;
+  }
 }
 
 .backtest-overlay {
