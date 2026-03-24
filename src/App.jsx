@@ -45,6 +45,24 @@ const LS_POSITION_CAPITAL = 'scanner-pro-position-capital'
 const LS_POSITION_RISK = 'scanner-pro-position-risk'
 const LS_POSITION_ACCOUNT = 'scanner-pro-position-account-type'
 const LS_FAVORITES = 'scanner-pro-favorites'
+const LS_SCANNER_MODE = 'scanner-pro-scanner-mode'
+
+/** Modes scanner : interface et watchlist dédiées */
+const SCANNER_MODE = {
+  FOREX: 'forex',
+  CRYPTO: 'crypto',
+  MATIERES: 'matieres',
+}
+
+function readScannerMode() {
+  try {
+    const v = localStorage.getItem(LS_SCANNER_MODE)
+    if (v === SCANNER_MODE.FOREX || v === SCANNER_MODE.CRYPTO || v === SCANNER_MODE.MATIERES) return v
+  } catch {
+    /* ignore */
+  }
+  return SCANNER_MODE.FOREX
+}
 
 /** Unités de base par lot forex (MT4) selon type de compte */
 const FOREX_LOT_UNITS = { Standard: 100000, Mini: 10000, Micro: 1000 }
@@ -64,8 +82,12 @@ const FOREX_TYPICAL_SPREAD_PIPS = {
 }
 
 const FAVORITES_FILTER = '⭐ Favoris'
-const FILTERS = ['Tous', FAVORITES_FILTER, 'Crypto', 'Forex', 'Matières', '🔥 Signaux forts']
 const STRONG_SIGNAL_FILTER = '🔥 Signaux forts'
+const FILTERS_BY_MODE = {
+  [SCANNER_MODE.FOREX]: ['Tous', FAVORITES_FILTER, STRONG_SIGNAL_FILTER],
+  [SCANNER_MODE.CRYPTO]: ['Tous', FAVORITES_FILTER, STRONG_SIGNAL_FILTER],
+  [SCANNER_MODE.MATIERES]: ['Tous', FAVORITES_FILTER, STRONG_SIGNAL_FILTER],
+}
 
 function readFavoritesFromStorage() {
   try {
@@ -102,6 +124,9 @@ const WATCHLIST = [
   { label: 'SOL/USDT', category: 'Crypto', tvSymbol: 'BINANCE:SOLUSDT', binanceSymbol: 'SOLUSDT', decimals: 2, simBasePrice: 170 },
   { label: 'XRP/USDT', category: 'Crypto', tvSymbol: 'BINANCE:XRPUSDT', binanceSymbol: 'XRPUSDT', decimals: 4, simBasePrice: 0.52 },
   { label: 'BNB/USDT', category: 'Crypto', tvSymbol: 'BINANCE:BNBUSDT', binanceSymbol: 'BNBUSDT', decimals: 2, simBasePrice: 600 },
+  { label: 'DOGE/USDT', category: 'Crypto', tvSymbol: 'BINANCE:DOGEUSDT', binanceSymbol: 'DOGEUSDT', decimals: 5, simBasePrice: 0.12 },
+  { label: 'ADA/USDT', category: 'Crypto', tvSymbol: 'BINANCE:ADAUSDT', binanceSymbol: 'ADAUSDT', decimals: 4, simBasePrice: 0.45 },
+  { label: 'AVAX/USDT', category: 'Crypto', tvSymbol: 'BINANCE:AVAXUSDT', binanceSymbol: 'AVAXUSDT', decimals: 2, simBasePrice: 35 },
 
   // Forex
   { label: 'EUR/USD', category: 'Forex', tvSymbol: 'FX:EURUSD', twelveSymbol: 'EUR/USD', decimals: 5, simBasePrice: 1.08 },
@@ -125,6 +150,19 @@ const SIM_PROFILE_BY_CATEGORY = {
   Crypto: { entryVolPct: 0.004, atrPct: 0.012, emaDiffPct: 0.010 },
   Forex: { entryVolPct: 0.0006, atrPct: 0.0012, emaDiffPct: 0.0025 },
   'Matières': { entryVolPct: 0.0025, atrPct: 0.006, emaDiffPct: 0.009 },
+}
+
+function getWatchlistForScannerMode(mode) {
+  switch (mode) {
+    case SCANNER_MODE.FOREX:
+      return WATCHLIST.filter((x) => x.category === 'Forex')
+    case SCANNER_MODE.CRYPTO:
+      return WATCHLIST.filter((x) => x.category === 'Crypto')
+    case SCANNER_MODE.MATIERES:
+      return WATCHLIST.filter((x) => x.category === 'Matières')
+    default:
+      return WATCHLIST
+  }
 }
 
 function countMtfScoresAbove75(mtfScores) {
@@ -309,6 +347,9 @@ function WatchlistPanel({
   scanResults,
   filter,
   setFilter,
+  filters,
+  scannerMode,
+  cryptoTickerBySymbol,
   onPickSymbol,
   scoreHistory,
   scorePulse,
@@ -404,9 +445,14 @@ function WatchlistPanel({
           <div className="watchlist-sparkline-wrap">
             <Sparkline values={values} tone={tone} />
           </div>
-          {item.category === 'Forex' && (
+          {item.category === 'Forex' && scannerMode === SCANNER_MODE.FOREX && (
             <div className="watchlist-spread mono">
               Spread typ. ~{getForexTypicalSpreadPips(item.label)} pip(s)
+            </div>
+          )}
+          {scannerMode === SCANNER_MODE.CRYPTO && item.binanceSymbol && cryptoTickerBySymbol?.[item.binanceSymbol] && (
+            <div className="watchlist-crypto-volume mono">
+              Vol. 24h ≈ {formatQuoteVolumeUsd(cryptoTickerBySymbol[item.binanceSymbol].quoteVolume)} USDT
             </div>
           )}
         </div>
@@ -419,7 +465,7 @@ function WatchlistPanel({
       <div className="panel-title syne">Watchlist</div>
 
       <div className="filter-bar" role="tablist" aria-label="Filter watchlist">
-        {FILTERS.map((f) => (
+        {filters.map((f) => (
           <button
             key={f}
             type="button"
@@ -600,6 +646,27 @@ function forexManualWatchlistRank(item, mode) {
   return 100
 }
 
+function ScannerModeSwitcher({ mode, onChange }) {
+  const btn = (key, label) => (
+    <button
+      key={key}
+      type="button"
+      className={`scanner-mode-btn ${mode === key ? 'is-active' : ''}`}
+      onClick={() => onChange(key)}
+      aria-pressed={mode === key}
+    >
+      {label}
+    </button>
+  )
+  return (
+    <div className="scanner-mode-switcher" role="tablist" aria-label="Mode du scanner">
+      {btn(SCANNER_MODE.FOREX, '💱 Forex')}
+      {btn(SCANNER_MODE.CRYPTO, '₿ Crypto')}
+      {btn(SCANNER_MODE.MATIERES, '🥇 Matières')}
+    </div>
+  )
+}
+
 function ForexSessionsBar({ now, selectedSession, onSessionClick }) {
   const t = utcMinuteTotal(now)
   const tok = t >= 0 && t < 540
@@ -778,13 +845,63 @@ function newsCardImpactClass(impact) {
   return 'news-card--low'
 }
 
-function NewsPanel({ articles, calendarEvents, newsError, calendarError }) {
+function CommoditiesContextPanel() {
   return (
-    <div className="news-panel">
-      <div className="news-panel-title syne">Actualites & calendrier</div>
-      <p className="panel-help news-hint">
-        Bonus score : FG &lt; 25 → SHORT | FG &gt; 75 → LONG. Fear & Greed affiche dans le header.
+    <div className="commodities-corr-panel">
+      <div className="signals-title syne">Dollar (DXY) &amp; corrélation</div>
+      <p className="commodities-corr-text">
+        Or / argent : relation inverse fréquente avec le <strong>DXY</strong> (dollar fort → pression sur les métaux en USD).
       </p>
+      <p className="commodities-corr-text">
+        WTI : coté en USD — le dollar influence le prix pour les acheteurs internationaux.
+      </p>
+      <div className="signals-title syne">Saisonnalité (réf.)</div>
+      <ul className="commodities-season-list">
+        <li>Or : demande bijouterie souvent plus forte fin d’année (fêtes, Inde).</li>
+        <li>Pétrole : saison routière été (US), chauffage hivernal hémisphère nord.</li>
+      </ul>
+    </div>
+  )
+}
+
+function formatQuoteVolumeUsd(v) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '—'
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)} Md`
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)} M`
+  if (n >= 1e3) return `${(n / 1e3).toFixed(2)} k`
+  return n.toFixed(0)
+}
+
+function NewsPanel({ articles, calendarEvents, newsError, calendarError, scannerMode }) {
+  const isForex = scannerMode === SCANNER_MODE.FOREX
+  const isCrypto = scannerMode === SCANNER_MODE.CRYPTO
+  const isMat = scannerMode === SCANNER_MODE.MATIERES
+
+  return (
+    <div
+      className={`news-panel ${isForex ? 'news-panel--mode-forex' : ''} ${isCrypto ? 'news-panel--mode-crypto' : ''} ${isMat ? 'news-panel--mode-matieres' : ''}`}
+    >
+      <div className="news-panel-title syne">Actualites & calendrier</div>
+      {isForex && (
+        <p className="panel-help news-hint news-hint--accent">
+          Calendrier macro prioritaire (NFP, CPI, BCE, FOMC…). Vérifiez les annonces avant d’ouvrir des positions Forex.
+        </p>
+      )}
+      {isCrypto && (
+        <p className="panel-help news-hint">
+          Marché 24h/24 — volatilité variable. Bonus score : FG &lt; 25 → SHORT | FG &gt; 75 → LONG.
+        </p>
+      )}
+      {isMat && (
+        <div className="commodities-news-block">
+          <div className="commodities-news-title syne">Contexte matières premières</div>
+          <p className="commodities-news-text">
+            Métaux et pétrole : surveiller le <strong>DXY</strong> et les stocks (EIA pour le brut). Corrélations indicatives
+            seulement.
+          </p>
+        </div>
+      )}
 
       <div className="news-subtitle syne">Calendrier (NFP, CPI, FOMC, PIB…)</div>
       {calendarError && <div className="news-error">{calendarError}</div>}
@@ -2420,6 +2537,7 @@ function SignalIdealPanel({
   selectedTimeframe,
   fearGreed,
   macroContext,
+  scannerMode,
 }) {
   const [capital, setCapital] = useState(() => readPositionCapital())
   const [riskPct, setRiskPct] = useState(() => readPositionRisk())
@@ -2501,8 +2619,14 @@ function SignalIdealPanel({
 
   const slPct = pctFromEntry(trade.stopLoss)
   const tpPct = pctFromEntry(trade.takeProfit)
-  const slPips = item.category === 'Forex' ? forexPipsFromEntry(trade.entry, trade.stopLoss, item) : null
-  const tpPips = item.category === 'Forex' ? forexPipsFromEntry(trade.entry, trade.takeProfit, item) : null
+  const slPips =
+    item.category === 'Forex' && scannerMode === SCANNER_MODE.FOREX
+      ? forexPipsFromEntry(trade.entry, trade.stopLoss, item)
+      : null
+  const tpPips =
+    item.category === 'Forex' && scannerMode === SCANNER_MODE.FOREX
+      ? forexPipsFromEntry(trade.entry, trade.takeProfit, item)
+      : null
 
   const rrRaw = Number(trade.rr)
   const rrClamped = clamp(rrRaw, 1.5, 5.0)
@@ -2608,7 +2732,7 @@ Maximum 5 lignes.`
 
       <div className="panel-help">{conf.label}</div>
 
-      {item.category === 'Forex' && (
+      {item.category === 'Forex' && scannerMode === SCANNER_MODE.FOREX && (
         <div className="forex-spread-hint mono">
           Spread typique : ~{getForexTypicalSpreadPips(item.label)} pip(s)
         </div>
@@ -2661,10 +2785,17 @@ Maximum 5 lignes.`
         </div>
       </div>
 
-      {item.category === 'Forex' && <ForexCorrelationsPanel />}
+      {item.category === 'Forex' && scannerMode === SCANNER_MODE.FOREX && <ForexCorrelationsPanel />}
+      {item.category === 'Matières' && scannerMode === SCANNER_MODE.MATIERES && <CommoditiesContextPanel />}
 
       <div className={`position-panel position-panel--risk-${riskTier}`}>
-        <div className="signals-title syne">Gestion de position</div>
+        <div className="signals-title syne">
+          {scannerMode === SCANNER_MODE.CRYPTO && item.category === 'Crypto'
+            ? 'Gestion de position (crypto)'
+            : scannerMode === SCANNER_MODE.MATIERES && item.category === 'Matières'
+              ? 'Gestion de position (matières)'
+              : 'Gestion de position'}
+        </div>
         <div className="position-inputs">
           <label className="position-field">
             <span className="position-label">Mon capital (€)</span>
@@ -2694,18 +2825,20 @@ Maximum 5 lignes.`
               }}
             />
           </label>
-          <label className="position-field">
-            <span className="position-label">Type de compte</span>
-            <select
-              className="position-input position-select mono"
-              value={accountType}
-              onChange={(e) => setAccountType(e.target.value)}
-            >
-              <option value="Standard">Standard</option>
-              <option value="Mini">Mini</option>
-              <option value="Micro">Micro</option>
-            </select>
-          </label>
+          {scannerMode === SCANNER_MODE.FOREX && item.category === 'Forex' && (
+            <label className="position-field">
+              <span className="position-label">Type de compte</span>
+              <select
+                className="position-input position-select mono"
+                value={accountType}
+                onChange={(e) => setAccountType(e.target.value)}
+              >
+                <option value="Standard">Standard</option>
+                <option value="Mini">Mini</option>
+                <option value="Micro">Micro</option>
+              </select>
+            </label>
+          )}
         </div>
 
         {positionSizing ? (
@@ -2735,12 +2868,24 @@ Maximum 5 lignes.`
               📊 Taille position : {Math.round(positionSizing.taillePosition).toLocaleString('fr-FR')}€
             </div>
             <div className="position-line">
-              📈 Lots recommandés : {positionSizing.lotsRecommended.toFixed(4)}
-              {item.category === 'Forex' && (
-                <span className="position-forex-hint">
-                  {' '}
-                  (≈ {positionSizing.forexLotsEquivalent.toFixed(4)} lot(s) {accountType})
-                </span>
+              {item.category === 'Crypto' && scannerMode === SCANNER_MODE.CRYPTO ? (
+                <>
+                  📈 Quantité : {positionSizing.lotsRecommended.toFixed(6)} {item.label.split('/')[0]}
+                </>
+              ) : item.category === 'Matières' && scannerMode === SCANNER_MODE.MATIERES ? (
+                <>
+                  📈 Taille (notionnel, réf.) : {positionSizing.lotsRecommended.toFixed(4)} unités
+                </>
+              ) : (
+                <>
+                  📈 Lots recommandés : {positionSizing.lotsRecommended.toFixed(4)}
+                  {item.category === 'Forex' && scannerMode === SCANNER_MODE.FOREX && (
+                    <span className="position-forex-hint">
+                      {' '}
+                      (≈ {positionSizing.forexLotsEquivalent.toFixed(4)} lot(s) {accountType})
+                    </span>
+                  )}
+                </>
               )}
             </div>
             <div className="position-line">
@@ -2905,10 +3050,89 @@ Maximum 5 lignes.`
 }
 
 export default function App() {
+  const [scannerMode, setScannerMode] = useState(() => readScannerMode())
+  const [btcDominance, setBtcDominance] = useState(null)
+  const [cryptoTickerBySymbol, setCryptoTickerBySymbol] = useState({})
+
   const [filter, setFilter] = useState('Tous')
   /** null | 'tokyo' | 'london' | 'newyork' | 'overlap' — tri Forex depuis le header */
   const [forexSessionManualFilter, setForexSessionManualFilter] = useState(null)
   const [favoriteSymbols, setFavoriteSymbols] = useState(() => readFavoritesFromStorage())
+
+  const modeWatchlist = useMemo(() => getWatchlistForScannerMode(scannerMode), [scannerMode])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_SCANNER_MODE, scannerMode)
+    } catch {
+      /* ignore */
+    }
+  }, [scannerMode])
+
+  useEffect(() => {
+    setForexSessionManualFilter(null)
+    setFilter('Tous')
+  }, [scannerMode])
+
+  useEffect(() => {
+    if (scannerMode !== SCANNER_MODE.CRYPTO) {
+      setCryptoTickerBySymbol({})
+      return
+    }
+    const cryptoList = getWatchlistForScannerMode(SCANNER_MODE.CRYPTO)
+    let cancelled = false
+    async function load() {
+      const next = {}
+      await Promise.all(
+        cryptoList.map(async (item) => {
+          if (!item.binanceSymbol) return
+          try {
+            const r = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${item.binanceSymbol}`)
+            const j = await r.json()
+            if (j?.quoteVolume != null) {
+              next[item.binanceSymbol] = {
+                quoteVolume: parseFloat(j.quoteVolume),
+                volume: parseFloat(j.volume),
+              }
+            }
+          } catch {
+            /* ignore */
+          }
+        }),
+      )
+      if (!cancelled) setCryptoTickerBySymbol(next)
+    }
+    load()
+    const id = window.setInterval(load, 60000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [scannerMode])
+
+  useEffect(() => {
+    if (scannerMode !== SCANNER_MODE.CRYPTO) {
+      setBtcDominance(null)
+      return
+    }
+    let cancelled = false
+    async function load() {
+      try {
+        const r = await fetch('https://api.coingecko.com/api/v3/global')
+        const j = await r.json()
+        const pct = j?.data?.market_cap_percentage?.btc
+        if (!cancelled && pct != null) setBtcDominance(Number(pct))
+      } catch {
+        if (!cancelled) setBtcDominance(null)
+      }
+    }
+    load()
+    const id = window.setInterval(load, 5 * 60 * 1000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [scannerMode])
 
   useEffect(() => {
     try {
@@ -2928,13 +3152,15 @@ export default function App() {
   }, [])
 
   const categoryItems = useMemo(() => {
-    if (filter === STRONG_SIGNAL_FILTER) return WATCHLIST
-    if (filter === FAVORITES_FILTER) return WATCHLIST.filter((x) => favoriteSymbols.includes(x.tvSymbol))
-    if (filter === 'Tous') return WATCHLIST
-    return WATCHLIST.filter((x) => x.category === filter)
-  }, [filter, favoriteSymbols])
+    if (filter === STRONG_SIGNAL_FILTER) return modeWatchlist
+    if (filter === FAVORITES_FILTER) return modeWatchlist.filter((x) => favoriteSymbols.includes(x.tvSymbol))
+    if (filter === 'Tous') return modeWatchlist
+    return modeWatchlist.filter((x) => x.category === filter)
+  }, [filter, favoriteSymbols, modeWatchlist])
 
-  const [selectedTvSymbol, setSelectedTvSymbol] = useState(WATCHLIST[0].tvSymbol)
+  const [selectedTvSymbol, setSelectedTvSymbol] = useState(
+    () => getWatchlistForScannerMode(readScannerMode())[0]?.tvSymbol ?? WATCHLIST[0].tvSymbol,
+  )
   // Un seul state pour chart + contexte (boutons timeframe)
   const [selectedTimeframe, setSelectedTimeframe] = useState(TIMEFRAMES[2])
 
@@ -3173,14 +3399,14 @@ export default function App() {
     let list =
       filter !== STRONG_SIGNAL_FILTER
         ? categoryItems
-        : WATCHLIST.filter((item) => {
+        : modeWatchlist.filter((item) => {
             const raw = scanResults[item.tvSymbol]?.confluence
             if (!raw) return false
             const conf = applyMacroToConfluence(raw, macroContext)
             if (!conf) return false
             return conf.score > 75 && conf.trade.rr > 2 && conf.alignedCount >= 2
           })
-    if (forexSessionManualFilter) {
+    if (scannerMode === SCANNER_MODE.FOREX && forexSessionManualFilter) {
       list = [...list].sort((a, b) => {
         const ar = forexManualWatchlistRank(a, forexSessionManualFilter)
         const br = forexManualWatchlistRank(b, forexSessionManualFilter)
@@ -3189,14 +3415,14 @@ export default function App() {
       })
     }
     return list
-  }, [filter, categoryItems, scanResults, macroContext, forexSessionManualFilter])
+  }, [filter, categoryItems, scanResults, macroContext, forexSessionManualFilter, scannerMode, modeWatchlist])
 
   // Keep selected symbol valid when switching filters.
   useEffect(() => {
     if (!visibleItems.some((x) => x.tvSymbol === selectedTvSymbol)) {
-      setSelectedTvSymbol(visibleItems[0]?.tvSymbol ?? WATCHLIST[0].tvSymbol)
+      setSelectedTvSymbol(visibleItems[0]?.tvSymbol ?? modeWatchlist[0]?.tvSymbol ?? WATCHLIST[0].tvSymbol)
     }
-  }, [visibleItems, selectedTvSymbol])
+  }, [visibleItems, selectedTvSymbol, modeWatchlist])
 
   const onPickSymbol = useCallback(
     (tvSymbol) => {
@@ -3527,9 +3753,23 @@ export default function App() {
     return () => { cancelled = true }
   }, [selectedTvSymbol, selectedTimeframe.id, selectedTimeframe.label, selectedTimeframe.binanceInterval, selectedTimeframe.twelveInterval, scanResults])
 
+  const brandSubtitle =
+    scannerMode === SCANNER_MODE.FOREX
+      ? 'TradingView · Forex · sessions UTC · pips & lots'
+      : scannerMode === SCANNER_MODE.CRYPTO
+        ? 'TradingView · Crypto 24h/7j · volume & dominance'
+        : 'TradingView · métaux & énergie · DXY & saisonnalité'
+
+  const footerBlurb =
+    scannerMode === SCANNER_MODE.FOREX
+      ? 'Mode Forex : Twelve Data (paires), calendrier macro prioritaire, sizing en lots.'
+      : scannerMode === SCANNER_MODE.CRYPTO
+        ? 'Mode Crypto : Binance (OHLC), Fear & Greed, vol. 24h Binance, dominance BTC (CoinGecko).'
+        : 'Mode Matières : Twelve Data (XAU/XAG/WTI), contexte dollar & saisonnalité (réf.).'
+
   return (
     <div
-      className={`scanner-app ${chartFullscreen ? 'is-fullscreen' : ''} ${appReady ? 'scanner-app--ready' : ''}`}
+      className={`scanner-app scanner-mode-${scannerMode} ${chartFullscreen ? 'is-fullscreen' : ''} ${appReady ? 'scanner-app--ready' : ''}`}
     >
       <header className="scanner-header">
         <div className="header-main-row">
@@ -3542,14 +3782,20 @@ export default function App() {
               Scanner Pro
               <span className="brand-accent">™</span>
             </div>
-            <div className="brand-subtitle">
-              TradingView · scores multi-TF · indicateurs temps reel
-            </div>
+            <div className="brand-subtitle">{brandSubtitle}</div>
           </div>
         </div>
 
+        <ScannerModeSwitcher mode={scannerMode} onChange={setScannerMode} />
+
         <div className="header-right">
-          <div className="fear-greed-block" title="Crypto Fear & Greed (alternative.me)">
+          {scannerMode === SCANNER_MODE.CRYPTO && (
+            <div className="btc-dominance-pill mono" title="Dominance BTC (CoinGecko, marché global)">
+              BTC {btcDominance != null ? `${btcDominance.toFixed(1)}%` : '—'}
+            </div>
+          )}
+          {scannerMode === SCANNER_MODE.CRYPTO && (
+          <div className="fear-greed-block fear-greed-block--prominent" title="Crypto Fear & Greed (alternative.me)">
             <div className="fear-greed-pill mono">
               <span className="fear-greed-emoji">{fearGreedEmoji(fearGreed?.value)}</span>
               <span className="fear-greed-num">
@@ -3566,6 +3812,7 @@ export default function App() {
               />
             </div>
           </div>
+          )}
           <button
             type="button"
             className={`telegram-toggle ${telegramAlertsEnabled ? 'is-on' : ''}`}
@@ -3647,13 +3894,15 @@ export default function App() {
           </div>
         </div>
         </div>
-        <ForexSessionsBar
-          now={now}
-          selectedSession={forexSessionManualFilter}
-          onSessionClick={(key) => {
-            setForexSessionManualFilter((prev) => (prev === key ? null : key))
-          }}
-        />
+        {scannerMode === SCANNER_MODE.FOREX && (
+          <ForexSessionsBar
+            now={now}
+            selectedSession={forexSessionManualFilter}
+            onSessionClick={(key) => {
+              setForexSessionManualFilter((prev) => (prev === key ? null : key))
+            }}
+          />
+        )}
       </header>
 
       <button
@@ -3674,6 +3923,9 @@ export default function App() {
             scanResults={scanResults}
             filter={filter}
             setFilter={setFilter}
+            filters={FILTERS_BY_MODE[scannerMode]}
+            scannerMode={scannerMode}
+            cryptoTickerBySymbol={cryptoTickerBySymbol}
             onPickSymbol={onPickSymbol}
             scoreHistory={scoreHistory}
             scorePulse={scorePulse}
@@ -3686,6 +3938,7 @@ export default function App() {
             calendarEvents={calendarEvents}
             newsError={newsError}
             calendarError={calendarError}
+            scannerMode={scannerMode}
           />
         </aside>
 
@@ -3716,6 +3969,9 @@ export default function App() {
                 scanResults={scanResults}
                 filter={filter}
                 setFilter={setFilter}
+                filters={FILTERS_BY_MODE[scannerMode]}
+                scannerMode={scannerMode}
+                cryptoTickerBySymbol={cryptoTickerBySymbol}
                 onPickSymbol={onPickSymbol}
                 scoreHistory={scoreHistory}
                 scorePulse={scorePulse}
@@ -3785,12 +4041,13 @@ export default function App() {
             selectedTimeframe={selectedTimeframe}
             fearGreed={fearGreed}
             macroContext={macroContext}
+            scannerMode={scannerMode}
           />
         </aside>
       </main>
 
       <footer className="scanner-footer">
-        {`Données : Binance (crypto) + Twelve Data (forex/matières). Scores multi-timeframe 1D/4H/15m. Chart : TradingView (${selectedTimeframe.tradingViewInterval}).`}
+        {footerBlurb} Scores MTF 1D/4H/15m. Chart TradingView ({selectedTimeframe.tradingViewInterval}).
       </footer>
 
       <BacktestPanel

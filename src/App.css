@@ -218,7 +218,31 @@ body:has(.scanner-app) {
     linear-gradient(180deg, var(--sc-bg) 0%, #05080e 100%);
   opacity: 0;
   transform: translateY(6px);
-  transition: opacity 0.45s ease, transform 0.45s ease;
+  transition:
+    opacity 0.45s ease,
+    transform 0.45s ease,
+    background 0.5s ease;
+}
+
+.scanner-app.scanner-mode-forex {
+  --sc-accent: #4d9fff;
+  background: radial-gradient(1200px circle at 8% -10%, rgba(77, 159, 255, 0.14), transparent 52%),
+    radial-gradient(900px circle at 92% 0%, rgba(77, 159, 255, 0.06), transparent 48%),
+    linear-gradient(180deg, var(--sc-bg) 0%, #05080e 100%);
+}
+
+.scanner-app.scanner-mode-crypto {
+  --sc-accent: #f5c842;
+  background: radial-gradient(1200px circle at 8% -10%, rgba(245, 200, 66, 0.14), transparent 52%),
+    radial-gradient(900px circle at 92% 0%, rgba(255, 61, 90, 0.07), transparent 48%),
+    linear-gradient(180deg, var(--sc-bg) 0%, #05080e 100%);
+}
+
+.scanner-app.scanner-mode-matieres {
+  --sc-accent: #ffd700;
+  background: radial-gradient(1200px circle at 8% -10%, rgba(255, 215, 0, 0.12), transparent 52%),
+    radial-gradient(900px circle at 92% 0%, rgba(245, 158, 11, 0.08), transparent 48%),
+    linear-gradient(180deg, var(--sc-bg) 0%, #05080e 100%);
 }
 
 .scanner-app--ready {
@@ -258,6 +282,123 @@ body:has(.scanner-app) {
   align-items: center;
   gap: 16px;
   flex-wrap: wrap;
+  width: 100%;
+}
+
+.scanner-mode-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.scanner-mode-btn {
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(8, 12, 18, 0.65);
+  color: rgba(229, 231, 235, 0.88);
+  font-size: 12px;
+  font-weight: 800;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    border-color 0.25s ease,
+    background 0.25s ease,
+    color 0.25s ease,
+    box-shadow 0.25s ease,
+    transform 0.2s ease;
+}
+
+.scanner-mode-btn:hover {
+  border-color: color-mix(in srgb, var(--sc-accent) 55%, transparent);
+  color: var(--sc-text);
+}
+
+.scanner-mode-btn.is-active {
+  border-color: color-mix(in srgb, var(--sc-accent) 70%, white);
+  background: color-mix(in srgb, var(--sc-accent) 18%, rgba(8, 12, 18, 0.9));
+  color: var(--sc-text);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--sc-accent) 35%, transparent);
+}
+
+.btc-dominance-pill {
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  color: rgba(253, 224, 138, 0.95);
+  background: rgba(245, 200, 66, 0.12);
+  border: 1px solid rgba(245, 200, 66, 0.35);
+  white-space: nowrap;
+}
+
+.fear-greed-block--prominent .fear-greed-pill {
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.fear-greed-block--prominent .fear-greed-num {
+  font-size: 15px;
+}
+
+.watchlist-crypto-volume {
+  margin-top: 6px;
+  font-size: 10px;
+  color: color-mix(in srgb, var(--sc-accent) 75%, var(--sc-muted));
+}
+
+.news-panel--mode-forex .news-hint--accent {
+  border-left: 3px solid var(--sc-accent);
+  padding-left: 10px;
+  color: rgba(226, 232, 240, 0.95);
+}
+
+.commodities-news-block {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--sc-border);
+  background: rgba(8, 12, 18, 0.45);
+}
+
+.commodities-news-title {
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.commodities-news-text {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(229, 231, 235, 0.88);
+}
+
+.commodities-corr-panel {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--sc-border);
+  background: rgba(8, 12, 18, 0.45);
+}
+
+.commodities-corr-text {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(229, 231, 235, 0.88);
+}
+
+.commodities-season-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(229, 231, 235, 0.85);
 }
 
 .forex-sessions-bar {
@@ -427,20 +568,28 @@ body:has(.scanner-app) {
   font-size: 15px;
   font-weight: 800;
   color: #fff;
-  background: linear-gradient(135deg, rgba(0, 229, 160, 0.35), rgba(30, 45, 69, 0.9));
-  border: 1px solid rgba(0, 229, 160, 0.45);
-  box-shadow: 0 0 24px rgba(0, 229, 160, 0.15);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--sc-accent) 55%, transparent),
+    rgba(30, 45, 69, 0.9)
+  );
+  border: 1px solid color-mix(in srgb, var(--sc-accent) 55%, transparent);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--sc-accent) 28%, transparent);
   animation: brandLogoPulse 4s ease-in-out infinite;
+  transition:
+    border-color 0.45s ease,
+    background 0.45s ease,
+    box-shadow 0.45s ease;
 }
 
 @keyframes brandLogoPulse {
   0%,
   100% {
-    box-shadow: 0 0 20px rgba(0, 229, 160, 0.12);
+    box-shadow: 0 0 20px color-mix(in srgb, var(--sc-accent) 22%, transparent);
     filter: brightness(1);
   }
   50% {
-    box-shadow: 0 0 32px rgba(0, 229, 160, 0.28);
+    box-shadow: 0 0 32px color-mix(in srgb, var(--sc-accent) 35%, transparent);
     filter: brightness(1.08);
   }
 }
