@@ -774,18 +774,39 @@ function readPositionAccount() {
   return 'Standard'
 }
 
-/** Ajuste le score confluence selon Fear & Greed (crypto) */
+/** Ajuste le score confluence selon Fear & Greed (crypto uniquement) + checklist FG */
 function applyMacroToConfluence(confluence, macro) {
   if (!confluence) return null
   const fg = macro?.fearGreedValue
+  const cat = confluence.assetCategory ?? 'Forex'
   let score = confluence.score
-  if (fg != null && Number.isFinite(fg) && fg < 25) score = clamp(score - 5, 0, 100)
-  if (fg != null && Number.isFinite(fg) && fg > 75) score = clamp(score + 5, 0, 100)
+  if (cat === 'Crypto') {
+    if (fg != null && Number.isFinite(fg) && fg < 25) score = clamp(score - 5, 0, 100)
+    if (fg != null && Number.isFinite(fg) && fg > 75) score = clamp(score + 5, 0, 100)
+  }
+  let checklist = confluence.checklist
+  if (cat === 'Crypto' && Array.isArray(confluence.checklist) && fg != null && Number.isFinite(fg)) {
+    const idx = confluence.checklist.findIndex((c) => c.label.includes('Fear'))
+    if (idx >= 0) {
+      const rec = confluence.recommendation
+      const ok =
+        (rec === 'LONG' && fg > 55) ||
+        (rec === 'SHORT' && fg < 45) ||
+        (rec === 'ATTENDRE' && fg >= 40 && fg <= 60)
+      checklist = confluence.checklist.map((c, i) => (i === idx ? { ...c, ok } : c))
+    }
+  }
   return {
     ...confluence,
     score,
+    checklist,
     macroWarning: macro?.macroImminent === true,
-    fearGreedAdj: fg != null && fg < 25 ? 'SHORT' : fg != null && fg > 75 ? 'LONG' : null,
+    fearGreedAdj:
+      cat === 'Crypto' && fg != null && fg < 25
+        ? 'SHORT'
+        : cat === 'Crypto' && fg != null && fg > 75
+          ? 'LONG'
+          : null,
   }
 }
 
@@ -1137,6 +1158,88 @@ function computeWilliamsR(candles, period = 14) {
   const close = candles[candles.length - 1].close
   if (hh === ll) return -50
   return -100 * ((hh - close) / (hh - ll))
+}
+
+/** Stochastique classique %K (14) sur OHLC, lissage %D = moyenne 3 derniers %K. */
+function computeStochasticClassic(candles, period = 14) {
+  if (candles.length < period + 2) return null
+  const highs = candles.map((c) => c.high)
+  const lows = candles.map((c) => c.low)
+  const closes = candles.map((c) => c.close)
+  const rawK = []
+  for (let i = period - 1; i < candles.length; i++) {
+    const hh = Math.max(...highs.slice(i - period + 1, i + 1))
+    const ll = Math.min(...lows.slice(i - period + 1, i + 1))
+    const c = closes[i]
+    rawK.push(hh === ll ? 50 : ((c - ll) / (hh - ll)) * 100)
+  }
+  if (rawK.length < 3) return null
+  const k = rawK[rawK.length - 1]
+  const d = (rawK[rawK.length - 1] + rawK[rawK.length - 2] + rawK[rawK.length - 3]) / 3
+  return { k, d }
+}
+
+/** Pivots journaliers (veille H/L/C) : PP, R1, S1, R2, S2 */
+function computePivotLevelsDaily(d1Candles) {
+  if (!d1Candles || d1Candles.length < 2) return null
+  const prev = d1Candles[d1Candles.length - 2]
+  const H = prev.high
+  const L = prev.low
+  const C = prev.close
+  const PP = (H + L + C) / 3
+  const R1 = 2 * PP - L
+  const S1 = 2 * PP - H
+  const R2 = PP + (H - L)
+  const S2 = PP - (H - L)
+  return { PP, R1, S1, R2, S2, H, L, C }
+}
+
+function scorePivotSub(price, pivots) {
+  if (!pivots || !Number.isFinite(price)) return 0
+  const { PP, S1, R1, S2, R2 } = pivots
+  const lo = Math.min(S1, R1)
+  const hi = Math.max(S1, R1)
+  if (price >= lo && price <= hi) return 15
+  const lo2 = Math.min(S2, R2)
+  const hi2 = Math.max(S2, R2)
+  if (price >= Math.min(lo2, PP) && price <= Math.max(hi2, PP)) return 10
+  return 4
+}
+
+function priceBetweenS1R1(price, pivots) {
+  if (!pivots || !Number.isFinite(price)) return false
+  const lo = Math.min(pivots.S1, pivots.R1)
+  const hi = Math.max(pivots.S1, pivots.R1)
+  return price >= lo && price <= hi
+}
+
+function getForexPipSizeFromLabel(label) {
+  if (!label || typeof label !== 'string') return 0.0001
+  return label.includes('JPY') ? 0.01 : 0.0001
+}
+
+function sumVolumeLastNBars(m15Candles, nBars) {
+  if (!m15Candles || m15Candles.length < 2) return null
+  const slice = m15Candles.slice(-Math.min(nBars, m15Candles.length))
+  let s = 0
+  for (const c of slice) {
+    if (c.volume != null && Number.isFinite(c.volume)) s += c.volume
+  }
+  return s
+}
+
+function meanDailyVolume20(d1Candles) {
+  if (!d1Candles || d1Candles.length < 5) return null
+  const slice = d1Candles.slice(-20)
+  let s = 0
+  let n = 0
+  for (const c of slice) {
+    if (c.volume != null && Number.isFinite(c.volume)) {
+      s += c.volume
+      n++
+    }
+  }
+  return n > 0 ? s / n : null
 }
 
 /** Ichimoku (9,26,52). Retourne { aboveCloud } pour la dernière barre. */
@@ -1518,7 +1621,8 @@ function scoreLabel(score) {
   return 'ATTENDRE'
 }
 
-function buildConfluenceResult(mtfMap) {
+function buildConfluenceResult(mtfMap, category = 'Forex', ctx = {}) {
+  const { d1Candles, m15Candles, dxySnapshot, itemLabel } = ctx
   const d1 = mtfMap['1D']
   const h4 = mtfMap['4H']
   const m15 = mtfMap['15m']
@@ -1544,10 +1648,16 @@ function buildConfluenceResult(mtfMap) {
   const alignedCount = Math.max(longAligned, shortAligned)
   const dominantDirection = longAligned >= shortAligned ? 'LONG' : 'SHORT'
 
-  // Score final pondéré : 1D x3, 4H x2, 15m x1 → /6 pour 0-100, puis ajustement divergences (±15)
+  let volumeBonus = 0
+  if (category === 'Crypto' && m15Candles && d1Candles) {
+    const v24 = sumVolumeLastNBars(m15Candles, 96)
+    const avgD = meanDailyVolume20(d1Candles)
+    if (v24 != null && avgD != null && avgD > 0 && v24 > avgD) volumeBonus = 10
+  }
+
   const weightedScore = Math.round(
     clamp(
-      (scores['1D'] * 3 + scores['4H'] * 2 + scores['15m'] * 1) / 6 + (div.scoreAdjust || 0),
+      (scores['1D'] * 3 + scores['4H'] * 2 + scores['15m'] * 1) / 6 + (div.scoreAdjust || 0) + volumeBonus,
       0,
       100,
     ),
@@ -1558,64 +1668,227 @@ function buildConfluenceResult(mtfMap) {
   const rsiShort = rsi >= 35 && rsi <= 50
 
   const macdHist = m15.indicators.macd.hist
-  const macdPrev = m15.indicators.macd.prevHist
-  const macdPositiveGrowing =
-    Number.isFinite(macdHist) && Number.isFinite(macdPrev) && macdHist > 0 && macdHist > macdPrev
-
   const price = m15.indicators.entry
   const emaLong = price > m15.indicators.ema20 && price > m15.indicators.ema50
+  const emaShort = price < m15.indicators.ema20 && price < m15.indicators.ema50
+  const bbMid = m15.indicators.bb?.middle
+  const bbLongOk = Number.isFinite(bbMid) ? price >= bbMid : emaLong
+  const bbShortOk = Number.isFinite(bbMid) ? price <= bbMid : emaShort
 
-  // Seuils : >75 signal fort, 50-75 surveiller, <50 attendre
   const score1dOkLong = scores['1D'] > 75
   const score4hOkLong = scores['4H'] > 75
   const score15mOkLong = scores['15m'] > 75
-
   const score1dOkShort = scores['1D'] < 25
   const score4hOkShort = scores['4H'] < 25
   const score15mOkShort = scores['15m'] < 25
 
   const macdLong = Number.isFinite(macdHist) ? macdHist > 0 : false
   const macdShort = Number.isFinite(macdHist) ? macdHist < 0 : false
-  const emaShort = price < m15.indicators.ema20 && price < m15.indicators.ema50
   const rrOk = m15.trade.rr > 2
   const ichimokuAbove = m15.indicators.ichimoku?.aboveCloud ?? false
-  const stochK = m15.indicators.stochRsi?.k ?? 50
-  const stochRsiFavLong = stochK < 20
-  const stochRsiFavShort = stochK > 80
+  const stochKClassic = m15.indicators.stochastic?.k ?? m15.indicators.stochRsi?.k ?? 50
+  const stochFavLong = stochKClassic < 30 || (stochKClassic >= 20 && stochKClassic <= 55)
+  const stochFavShort = stochKClassic > 70 || (stochKClassic >= 45 && stochKClassic <= 80)
   const cp = m15.indicators.candlestickPattern
   const patternCheckLong = cp?.bullish === true
   const patternCheckShort = cp?.bullish === false
-
   const divergenceCheckLong = div.hasBullish && !div.hasBearish
   const divergenceCheckShort = div.hasBearish && !div.hasBullish
 
-  const longChecks = [
-    score1dOkLong,
-    score4hOkLong,
-    score15mOkLong,
-    rsiLong,
-    macdLong,
-    emaLong,
-    rrOk,
-    ichimokuAbove,
-    stochRsiFavLong,
-    patternCheckLong,
-    divergenceCheckLong,
-  ]
+  const pivotLevels = d1Candles ? computePivotLevelsDaily(d1Candles) : null
+  const pivotBetweenLong = pivotLevels ? priceBetweenS1R1(price, pivotLevels) : false
+  const pivotBetweenShort = pivotLevels ? priceBetweenS1R1(price, pivotLevels) : false
 
-  const shortChecks = [
-    score1dOkShort,
-    score4hOkShort,
-    score15mOkShort,
-    rsiShort,
-    macdShort,
-    emaShort,
-    rrOk,
-    !ichimokuAbove,
-    stochRsiFavShort,
-    patternCheckShort,
-    divergenceCheckShort,
-  ]
+  const vol24 = m15Candles ? sumVolumeLastNBars(m15Candles, 96) : null
+  const avgD20 = meanDailyVolume20(d1Candles)
+  const volumeSpikeLong =
+    vol24 != null && avgD20 != null && avgD20 > 0 ? vol24 > avgD20 : false
+  const volumeSpikeShort = volumeSpikeLong
+
+  const atr = m15.indicators.atr
+  const atrVolOk =
+    atr != null && Number.isFinite(price) && price > 0 ? atr / price > 0.0008 : false
+
+  const dch = dxySnapshot?.changePct
+  const isGold = itemLabel?.includes('XAU')
+  const dxyFavLong =
+    isGold && dch != null && Number.isFinite(dch)
+      ? dch < 0
+      : dch != null && Number.isFinite(dch)
+        ? dch < 0.05
+        : false
+  const dxyFavShort =
+    isGold && dch != null && Number.isFinite(dch)
+      ? dch > 0
+      : dch != null && Number.isFinite(dch)
+        ? dch > 0.05
+        : false
+
+  let longChecks
+  let shortChecks
+  let longLabels
+  let shortLabels
+
+  if (category === 'Crypto') {
+    longChecks = [
+      score1dOkLong,
+      score4hOkLong,
+      score15mOkLong,
+      rsiLong,
+      macdLong,
+      emaLong,
+      bbLongOk,
+      volumeSpikeLong,
+      false,
+      patternCheckLong,
+      divergenceCheckLong,
+    ]
+    shortChecks = [
+      score1dOkShort,
+      score4hOkShort,
+      score15mOkShort,
+      rsiShort,
+      macdShort,
+      emaShort,
+      bbShortOk,
+      volumeSpikeShort,
+      false,
+      patternCheckShort,
+      divergenceCheckShort,
+    ]
+    longLabels = [
+      'Score 1D > 75',
+      'Score 4H > 75',
+      'Score 15m > 75',
+      'RSI entre 50-65',
+      'MACD positif',
+      'Prix > EMA20 et EMA50',
+      'Prix au-dessus bande médiane (Bollinger)',
+      'Volume 24h > moyenne 20 jours',
+      'Fear & Greed aligné',
+      'Pattern de retournement détecté',
+      'Divergence RSI/MACD favorable',
+    ]
+    shortLabels = [
+      'Score 1D < 25',
+      'Score 4H < 25',
+      'Score 15m < 25',
+      'RSI entre 35-50',
+      'MACD négatif',
+      'Prix < EMA20 et EMA50',
+      'Prix sous bande médiane (Bollinger)',
+      'Volume 24h > moyenne 20 jours',
+      'Fear & Greed aligné',
+      'Pattern de retournement détecté',
+      'Divergence RSI/MACD favorable',
+    ]
+  } else if (category === 'Matières') {
+    longChecks = [
+      score1dOkLong,
+      score4hOkLong,
+      score15mOkLong,
+      rsiLong,
+      macdLong,
+      emaLong,
+      rrOk,
+      atrVolOk,
+      dxyFavLong,
+      patternCheckLong,
+      divergenceCheckLong,
+    ]
+    shortChecks = [
+      score1dOkShort,
+      score4hOkShort,
+      score15mOkShort,
+      rsiShort,
+      macdShort,
+      emaShort,
+      rrOk,
+      atrVolOk,
+      dxyFavShort,
+      patternCheckShort,
+      divergenceCheckShort,
+    ]
+    longLabels = [
+      'Score 1D > 75',
+      'Score 4H > 75',
+      'Score 15m > 75',
+      'RSI entre 50-65',
+      'MACD positif',
+      'Prix > EMA20 et EMA50',
+      'R/R > 2.0',
+      'ATR / volatilité suffisante',
+      'DXY aligné (réf. inverse Or)',
+      'Pattern de retournement détecté',
+      'Divergence RSI/MACD favorable',
+    ]
+    shortLabels = [
+      'Score 1D < 25',
+      'Score 4H < 25',
+      'Score 15m < 25',
+      'RSI entre 35-50',
+      'MACD négatif',
+      'Prix < EMA20 et EMA50',
+      'R/R > 2.0',
+      'ATR / volatilité suffisante',
+      'DXY aligné (réf. inverse Or)',
+      'Pattern de retournement détecté',
+      'Divergence RSI/MACD favorable',
+    ]
+  } else {
+    longChecks = [
+      score1dOkLong,
+      score4hOkLong,
+      score15mOkLong,
+      rsiLong,
+      macdLong,
+      emaLong,
+      rrOk,
+      ichimokuAbove,
+      pivotBetweenLong,
+      patternCheckLong,
+      divergenceCheckLong,
+    ]
+    shortChecks = [
+      score1dOkShort,
+      score4hOkShort,
+      score15mOkShort,
+      rsiShort,
+      macdShort,
+      emaShort,
+      rrOk,
+      !ichimokuAbove,
+      pivotBetweenShort,
+      patternCheckShort,
+      divergenceCheckShort,
+    ]
+    longLabels = [
+      'Score 1D > 75',
+      'Score 4H > 75',
+      'Score 15m > 75',
+      'RSI entre 50-65',
+      'MACD positif',
+      'Prix > EMA20 et EMA50',
+      'R/R > 2.0',
+      'Prix > nuage Ichimoku',
+      'Prix entre Pivot S1 et R1',
+      'Pattern de retournement détecté',
+      'Divergence RSI/MACD favorable',
+    ]
+    shortLabels = [
+      'Score 1D < 25',
+      'Score 4H < 25',
+      'Score 15m < 25',
+      'RSI entre 35-50',
+      'MACD négatif',
+      'Prix < EMA20 et EMA50',
+      'R/R > 2.0',
+      'Prix < nuage Ichimoku',
+      'Prix entre Pivot S1 et R1',
+      'Pattern de retournement détecté',
+      'Divergence RSI/MACD favorable',
+    ]
+  }
 
   const longCount = longChecks.filter(Boolean).length
   const shortCount = shortChecks.filter(Boolean).length
@@ -1657,34 +1930,7 @@ function buildConfluenceResult(mtfMap) {
     checksDirection = 'SHORT'
   }
 
-  const checkLabels =
-    checksDirection === 'LONG'
-      ? [
-          'Score 1D > 75',
-          'Score 4H > 75',
-          'Score 15m > 75',
-          'RSI entre 50-65',
-          'MACD positif',
-          'Prix > EMA20 et EMA50',
-          'R/R > 2.0',
-          'Prix > nuage Ichimoku',
-          'Stoch RSI zone favorable',
-          'Pattern de retournement détecté',
-          'Divergence RSI/MACD favorable',
-        ]
-      : [
-          'Score 1D < 25',
-          'Score 4H < 25',
-          'Score 15m < 25',
-          'RSI entre 35-50',
-          'MACD négatif',
-          'Prix < EMA20 et EMA50',
-          'R/R > 2.0',
-          'Prix < nuage Ichimoku',
-          'Stoch RSI zone favorable',
-          'Pattern de retournement détecté',
-          'Divergence RSI/MACD favorable',
-        ]
+  const checkLabels = checksDirection === 'LONG' ? longLabels : shortLabels
 
   return {
     score: weightedScore,
@@ -1702,6 +1948,10 @@ function buildConfluenceResult(mtfMap) {
     divergenceSummary: div.summary ?? '',
     trade: m15.trade,
     indicators: m15.indicators,
+    assetCategory: category,
+    pivotLevels,
+    volumeBonusPts: volumeBonus,
+    dxySnapshot: dxySnapshot ?? null,
   }
 }
 
@@ -1841,7 +2091,7 @@ function simulateExitFromBar(direction, entry, sl, tp, candles, fromIdx) {
   }
 }
 
-function runBacktestOnCandles(m15, h4, d1) {
+function runBacktestOnCandles(m15, h4, d1, category = 'Forex', itemLabel = '') {
   if (m15.length < BACKTEST_15M_REQUIRED) {
     throw new Error(`Pas assez de bougies 15m (reçu ${m15.length}, besoin ~${BACKTEST_15M_REQUIRED})`)
   }
@@ -1872,13 +2122,32 @@ function runBacktestOnCandles(m15, h4, d1) {
     if (j4 < 0 || jd < 0) continue
 
     const slice15 = m15.slice(0, i + 1)
-    const c15 = computeIndicatorsAndTrade(slice15)
-    const c4 = computeIndicatorsAndTrade(h4.slice(0, j4 + 1))
-    const cd = computeIndicatorsAndTrade(d1.slice(0, jd + 1))
+    const d1Slice = d1.slice(0, jd + 1)
+    const c15 = computeIndicatorsAndTrade(slice15, category, {
+      d1Candles: d1Slice,
+      m15Candles: slice15,
+      dxySnapshot: category === 'Matières' ? null : null,
+      itemLabel,
+    })
+    const c4 = computeIndicatorsAndTrade(h4.slice(0, j4 + 1), category, {
+      d1Candles: d1Slice,
+      m15Candles: slice15,
+      itemLabel,
+    })
+    const cd = computeIndicatorsAndTrade(d1Slice, category, {
+      d1Candles: d1Slice,
+      m15Candles: slice15,
+      itemLabel,
+    })
     if (!c15 || !c4 || !cd) continue
 
     const mtfMap = { '15m': c15, '4H': c4, '1D': cd }
-    const conf = buildConfluenceResult(mtfMap)
+    const conf = buildConfluenceResult(mtfMap, category, {
+      d1Candles: d1Slice,
+      m15Candles: slice15,
+      dxySnapshot: null,
+      itemLabel,
+    })
     if (!conf) continue
 
     const score = conf.score
@@ -2270,18 +2539,26 @@ function simulateComputedForItem(item, prevSim) {
 
   const stochKSim = isLong ? 15 + Math.random() * 25 : 55 + Math.random() * 35
   const williamsRSim = isLong ? -85 - Math.random() * 15 : -35 + Math.random() * 35
+  const pipSim = item.label?.includes('JPY') ? 0.01 : 0.0001
   return {
     computed: {
       score,
+      assetCategory: item.category,
+      cryptoVolHint:
+        item.category === 'Crypto'
+          ? { vol24h: 1e6, avgDaily20: 8e5, ratio: 1.15 }
+          : null,
       indicators: {
         entry,
         ema20,
         ema50,
         rsi,
-        macd: { hist: macdHist },
+        macd: { hist: macdHist, prevHist: macdHist * 0.96 },
         bb,
         atr,
+        atrPips: item.category === 'Forex' ? atr / pipSim : null,
         stochRsi: { k: stochKSim, d: stochKSim - 5 },
+        stochastic: { k: stochKSim, d: stochKSim - 5 },
         williamsR: williamsRSim,
         ichimoku: { aboveCloud: isLong },
         candlestickPattern: Math.random() > 0.7 ? { name: isLong ? 'Hammer' : 'Shooting Star', bullish: isLong } : null,
@@ -2315,7 +2592,8 @@ function simulateComputedForItem(item, prevSim) {
   }
 }
 
-function computeIndicatorsAndTrade(candles) {
+function computeIndicatorsAndTrade(candles, category = 'Forex', opts = {}) {
+  const { d1Candles, m15Candles, dxySnapshot, itemLabel } = opts
   const closes = candles.map((c) => c.close)
   const entry = closes[closes.length - 1]
 
@@ -2333,54 +2611,86 @@ function computeIndicatorsAndTrade(candles) {
   const williamsR = computeWilliamsR(candles, 14)
   const ichimoku = computeIchimokuCloud(candles, 9, 26, 52)
   const candlestickPattern = detectCandlestickPattern(candles)
+  const stochClassic = computeStochasticClassic(candles, 14)
   if (rsi == null || macd == null || bb == null || atr == null) return null
 
-  // Pondération par indicateur (total 100 pts) : EMA 25, Ichimoku 20, RSI 15, MACD 15, BB 10, Stoch RSI 8, Williams 7
-  const emaStrongBull = ema20 > ema50 && entry > ema20
-  const emaStrongBear = ema50 > ema20 && entry < ema50
-  const emaScore = emaStrongBull ? 25 : emaStrongBear ? 0 : 12.5
+  const pipSize = getForexPipSizeFromLabel(itemLabel)
+  const atrPips = pipSize > 0 ? atr / pipSize : null
 
-  const ichimokuAbove = ichimoku?.aboveCloud ?? false
-  const ichimokuScore = ichimokuAbove ? 20 : 0
-
-  const rsiScore = clamp((rsi - 30) / 40, 0, 1) * 15
-
-  const histAbsNorm = Math.abs(macd.hist) / (entry * 0.002)
-  const histStrength = clamp(histAbsNorm, 0, 1)
-  const macdScore = macd.hist >= 0 ? histStrength * 15 : histStrength * 1.5
-
-  const volStrength = clamp((bb.width - 0.01) / 0.04, 0, 1)
-  const bbScore = (entry >= bb.middle ? volStrength : volStrength * 0.5) * 10
-
-  const stochK = stochRsi?.k ?? 50
-  const stochScore = stochK < 20 ? 8 : stochK > 80 ? 0 : 4
-
-  const williamsScore =
-    williamsR != null && williamsR < -80 ? 7 : williamsR != null && williamsR > -20 ? 0 : 3.5
-
-  let score = Math.round(
-    clamp(emaScore + ichimokuScore + rsiScore + macdScore + bbScore + stochScore + williamsScore, 0, 100)
-  )
-  if (candlestickPattern?.name) {
-    score = clamp(score + (candlestickPattern.bullish ? 10 : -10), 0, 100)
-  }
-
-  // Direction LONG/SHORT based on majority of bullish signals.
   const emaBull = ema20 > ema50
   const rsiBull = rsi >= 50
   const macdBull = macd.hist >= 0
+
+  let score = 50
+  /** @type {number} */
+  let stochKForSignals = stochRsi?.k ?? 50
+  let cryptoVolHint = null
+
+  if (category === 'Crypto') {
+    stochKForSignals = stochRsi?.k ?? 50
+    const emaScore = emaBull && entry > ema20 ? 25 : ema50 > ema20 && entry < ema50 ? 0 : 12.5
+    const volStrength = clamp(((bb.width ?? 0) - 0.01) / 0.04, 0, 1)
+    const bbScore = (entry >= bb.middle ? volStrength : volStrength * 0.5) * 20
+    const rsiScore = clamp((rsi - 30) / 40, 0, 1) * 20
+    const histAbsNorm = Math.abs(macd.hist) / (entry * 0.002)
+    const histStrength = clamp(histAbsNorm, 0, 1)
+    const macdScore = macd.hist >= 0 ? histStrength * 15 : histStrength * 2
+    const vol24 = m15Candles ? sumVolumeLastNBars(m15Candles, 96) : null
+    const avgD = meanDailyVolume20(d1Candles)
+    let volScore = 10
+    if (vol24 != null && avgD != null && avgD > 0) {
+      const ratio = vol24 / avgD
+      volScore = clamp((ratio - 0.4) * 18, 0, 20)
+      cryptoVolHint = { vol24h: vol24, avgDaily20: avgD, ratio }
+    }
+    score = Math.round(clamp(emaScore + bbScore + rsiScore + macdScore + volScore, 0, 100))
+  } else if (category === 'Matières') {
+    stochKForSignals = stochRsi?.k ?? 50
+    const emaScore = emaBull && entry > ema20 ? 25 : ema50 > ema20 && entry < ema50 ? 0 : 12.5
+    const rsiScore = clamp((rsi - 30) / 40, 0, 1) * 20
+    const histAbsNorm = Math.abs(macd.hist) / (entry * 0.002)
+    const histStrength = clamp(histAbsNorm, 0, 1)
+    const macdScore = macd.hist >= 0 ? histStrength * 20 : histStrength * 3
+    const atrNorm = clamp(atr / entry, 0, 0.08) / 0.08
+    const atrScore = atrNorm * 15
+    const dch = dxySnapshot?.changePct
+    const isGold = itemLabel?.includes('XAU')
+    const bear = ema20 < ema50
+    let dxyScore = 10
+    if (isGold && dch != null && Number.isFinite(dch)) {
+      const dxyUp = dch > 0
+      dxyScore = (dxyUp && bear) || (!dxyUp && !bear) ? 20 : 6
+    } else if (!isGold) {
+      dxyScore = 12
+    }
+    score = Math.round(clamp(emaScore + rsiScore + macdScore + atrScore + dxyScore, 0, 100))
+  } else {
+    stochKForSignals = stochClassic?.k ?? stochRsi?.k ?? 50
+    const emaScore = emaBull && entry > ema20 ? 20 : ema50 > ema20 && entry < ema50 ? 0 : 10
+    const ichimokuAbove = ichimoku?.aboveCloud ?? false
+    const ichimokuScore = ichimokuAbove ? 25 : 0
+    const rsiScore = clamp((rsi - 30) / 40, 0, 1) * 15
+    const histAbsNorm = Math.abs(macd.hist) / (entry * 0.002)
+    const histStrength = clamp(histAbsNorm, 0, 1)
+    const macdScore = macd.hist >= 0 ? histStrength * 15 : histStrength * 2
+    const sk = stochClassic?.k ?? 50
+    const stochScore = sk < 20 ? 10 : sk > 80 ? 0 : 6
+    const pivots = d1Candles ? computePivotLevelsDaily(d1Candles) : null
+    const pivotScore = pivots ? scorePivotSub(entry, pivots) : 0
+    score = Math.round(
+      clamp(emaScore + ichimokuScore + rsiScore + macdScore + stochScore + pivotScore, 0, 100),
+    )
+  }
+
   const bullishCount = (emaBull ? 1 : 0) + (rsiBull ? 1 : 0) + (macdBull ? 1 : 0)
   const direction = bullishCount >= 2 ? 'LONG' : 'SHORT'
-
   const isLong = direction === 'LONG'
 
-  // --- Support/Résistance basés sur pivots (100 bougies) ---
   const pivot = 5
   const nearestSupport = getNearestSupport(candles, entry, pivot)
   const nearestResistance = getNearestResistance(candles, entry, pivot)
-  const levelBuf = atr * 0.03 // léger buffer sous/sur le niveau
+  const levelBuf = atr * 0.03
 
-  // SL et TP à partir des vrais niveaux S/R
   let stopLoss
   let takeProfit
   if (isLong) {
@@ -2403,24 +2713,20 @@ function computeIndicatorsAndTrade(candles) {
         : entry - atr * 2.5
   }
 
-  // Sécuriser SL (doit être du bon côté du prix)
   if (isLong && stopLoss >= entry) stopLoss = entry - atr * 1.0
   if (!isLong && stopLoss <= entry) stopLoss = entry + atr * 1.0
 
   const riskDist = Math.abs(entry - stopLoss)
   let rr = riskDist > 0 ? Math.abs(takeProfit - entry) / riskDist : 2.0
   rr = clamp(rr, 1.5, 5.0)
-
-  // Ajuster TP pour respecter le RR contraint
   takeProfit = isLong ? entry + riskDist * rr : entry - riskDist * rr
 
-  // Active signals based on direction.
   const emaActive = isLong ? emaBull : !emaBull
   const rsiActive = isLong ? rsi >= 55 : rsi <= 45
   const macdActive = isLong ? macdBull : !macdBull
   const bbActive = isLong ? entry >= bb.middle : entry <= bb.middle
-  const stochRsiOversold = stochK < 20
-  const stochRsiOverbought = stochK > 80
+  const stochRsiOversold = stochKForSignals < 20
+  const stochRsiOverbought = stochKForSignals > 80
   const stochRsiFavLong = stochRsiOversold
   const stochRsiFavShort = stochRsiOverbought
   const williamsOversold = williamsR != null && williamsR < -80
@@ -2429,6 +2735,8 @@ function computeIndicatorsAndTrade(candles) {
 
   return {
     score,
+    assetCategory: category,
+    cryptoVolHint,
     indicators: {
       entry,
       ema20,
@@ -2437,7 +2745,9 @@ function computeIndicatorsAndTrade(candles) {
       macd,
       bb,
       atr,
-      stochRsi: stochRsi ? { k: stochK, d: stochRsi.d } : null,
+      atrPips: category === 'Forex' ? atrPips : null,
+      stochRsi: stochRsi ? { k: stochRsi.k, d: stochRsi.d } : null,
+      stochastic: stochClassic,
       williamsR,
       ichimoku,
       candlestickPattern,
@@ -2596,7 +2906,7 @@ function SignalIdealPanel({
   }
 
   const { trade } = conf
-  const indicators = contextIndicators ?? conf.indicators
+  const indicators = { ...conf.indicators, ...(contextIndicators || {}) }
   const signalClass =
     conf.signalTone === 'good'
       ? 'direction-pill--long'
@@ -2730,6 +3040,14 @@ Maximum 5 lignes.`
         </div>
       </div>
 
+      <div className="indicators-mode-title syne">
+        {scannerMode === SCANNER_MODE.FOREX
+          ? 'Indicateurs Forex'
+          : scannerMode === SCANNER_MODE.CRYPTO
+            ? 'Indicateurs Crypto'
+            : 'Indicateurs Matières premières'}
+      </div>
+
       <div className="panel-help">{conf.label}</div>
 
       {item.category === 'Forex' && scannerMode === SCANNER_MODE.FOREX && (
@@ -2738,12 +3056,31 @@ Maximum 5 lignes.`
         </div>
       )}
 
+      {scannerMode === SCANNER_MODE.FOREX && conf.pivotLevels && (
+        <div className="pivot-levels-block mono">
+          <div className="signals-title syne">Pivots journaliers (Trade Auto)</div>
+          <div className="pivot-levels-grid">
+            <span>PP {fmt(conf.pivotLevels.PP)}</span>
+            <span>R1 {fmt(conf.pivotLevels.R1)}</span>
+            <span>R2 {fmt(conf.pivotLevels.R2)}</span>
+            <span>S1 {fmt(conf.pivotLevels.S1)}</span>
+            <span>S2 {fmt(conf.pivotLevels.S2)}</span>
+          </div>
+        </div>
+      )}
+      {scannerMode === SCANNER_MODE.FOREX && indicators.atrPips != null && (
+        <div className="atr-pips-hint mono">ATR ≈ {Number(indicators.atrPips).toFixed(1)} pips</div>
+      )}
+      {scannerMode === SCANNER_MODE.CRYPTO && Number(conf.volumeBonusPts) > 0 && (
+        <div className="volume-bonus-hint mono">Volume 24h &gt; moy. 20j : +{conf.volumeBonusPts} pts</div>
+      )}
+
       {conf.macroWarning && (
         <div className="macro-warning-banner" role="alert">
           Evenement macro imminent — attention au trade
         </div>
       )}
-      {conf.fearGreedAdj && (
+      {scannerMode === SCANNER_MODE.CRYPTO && conf.fearGreedAdj && (
         <div className="macro-fg-hint">
           Ajustement score (Fear & Greed) : bonus {conf.fearGreedAdj === 'LONG' ? 'LONG' : 'SHORT'}
         </div>
@@ -3194,7 +3531,7 @@ export default function App() {
         mtfMap[tf.key] = computed
       }
       initial[item.tvSymbol] = {
-        confluence: buildConfluenceResult(mtfMap),
+        confluence: buildConfluenceResult(mtfMap, item.category, { itemLabel: item.label }),
         mtfData: mtfMap,
       }
     }
@@ -3454,7 +3791,7 @@ export default function App() {
           nextGroup[tf.key] = nextSim
         }
 
-        const confluence = buildConfluenceResult(mtfMap)
+        const confluence = buildConfluenceResult(mtfMap, item.category, { itemLabel: item.label })
         simStateRef.current[item.tvSymbol] = nextGroup
         simUpdates[item.tvSymbol] = { confluence, mtfData: mtfMap }
 
@@ -3501,8 +3838,27 @@ export default function App() {
       )
       if (realDataItems.length === 0) return
 
+      let dxySnapshotGlobal = null
+      if (TWELVE_DATA_KEY) {
+        const dxySyms = ['DX-Y.NYB', 'DXY', 'USDX']
+        for (const sym of dxySyms) {
+          try {
+            const dx = await fetchTwelveDataCandles(sym, '1day', 5, TWELVE_DATA_KEY)
+            if (dx.length >= 2) {
+              const cur = dx[dx.length - 1].close
+              const prev = dx[dx.length - 2].close
+              dxySnapshotGlobal = { changePct: prev > 0 ? ((cur - prev) / prev) * 100 : 0 }
+              break
+            }
+          } catch {
+            /* try next symbol */
+          }
+        }
+      }
+
       const tasks = realDataItems.map(async (item) => {
         const mtfMap = {}
+        const raw = {}
         for (const tf of MTF_TIMEFRAMES) {
           let candles = []
           if (item.binanceSymbol) {
@@ -3521,12 +3877,28 @@ export default function App() {
           }
 
           if (candles.length < 80) throw new Error('Not enough candles')
-          const computed = computeIndicatorsAndTrade(candles)
+          raw[tf.key] = candles
+        }
+
+        const dxyUse = item.category === 'Matières' ? dxySnapshotGlobal : null
+        for (const tf of MTF_TIMEFRAMES) {
+          const candles = raw[tf.key]
+          const computed = computeIndicatorsAndTrade(candles, item.category, {
+            d1Candles: raw['1D'],
+            m15Candles: raw['15m'],
+            dxySnapshot: dxyUse,
+            itemLabel: item.label,
+          })
           if (!computed) throw new Error('Indicators unavailable')
           mtfMap[tf.key] = computed
         }
 
-        const confluence = buildConfluenceResult(mtfMap)
+        const confluence = buildConfluenceResult(mtfMap, item.category, {
+          d1Candles: raw['1D'],
+          m15Candles: raw['15m'],
+          dxySnapshot: dxyUse,
+          itemLabel: item.label,
+        })
         if (!confluence) throw new Error('Confluence unavailable')
         return { tvSymbol: item.tvSymbol, confluence, mtfData: mtfMap }
       })
@@ -3644,7 +4016,7 @@ export default function App() {
         }
         const { m15, h4, d1 } = await fetchBacktestMtfCandles(selectedItem)
         if (cancelled) return
-        const data = runBacktestOnCandles(m15, h4, d1)
+        const data = runBacktestOnCandles(m15, h4, d1, selectedItem.category, selectedItem.label)
         if (!cancelled) setBacktestData(data)
       } catch (e) {
         if (!cancelled) setBacktestError(e instanceof Error ? e.message : 'Erreur')
@@ -3735,7 +4107,7 @@ export default function App() {
 
         if (cancelled) return
         if (candles.length >= 80) {
-          const computed = computeIndicatorsAndTrade(candles)
+          const computed = computeIndicatorsAndTrade(candles, item.category, { itemLabel: item.label })
           if (computed) setContextIndicators(computed.indicators)
         } else {
           const fallback = tfId === '1m' || tfId === '5m' ? '15m' : tfId === '1H' ? '4H' : '1D'

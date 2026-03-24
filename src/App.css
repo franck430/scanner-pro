@@ -1328,6 +1328,42 @@ body:has(.scanner-app) {
   color: rgba(148, 163, 184, 0.95);
 }
 
+.indicators-mode-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: color-mix(in srgb, var(--sc-accent) 85%, var(--sc-text));
+  margin-bottom: 6px;
+  letter-spacing: -0.02em;
+}
+
+.pivot-levels-block {
+  margin: 8px 0 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--sc-border);
+  background: rgba(8, 12, 18, 0.45);
+}
+
+.pivot-levels-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: rgba(226, 232, 240, 0.92);
+}
+
+.atr-pips-hint,
+.volume-bonus-hint {
+  margin: 4px 0 8px;
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.95);
+}
+
+.volume-bonus-hint {
+  color: rgba(253, 224, 138, 0.95);
+}
+
 .forex-spread-hint {
   margin: 6px 0 10px;
   padding: 6px 10px;
