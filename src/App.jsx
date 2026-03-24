@@ -847,6 +847,156 @@ function detectCandlestickPattern(candles) {
   return { name: null, bullish: null }
 }
 
+/** RSI indexé par bougie (aligné sur closes) pour divergences. */
+function buildRsiByBar(closes, period = 14) {
+  const raw = computeRSISeries(closes, period)
+  const rsiByBar = Array(closes.length).fill(null)
+  for (let k = 0; k < raw.length; k++) {
+    rsiByBar[period + 1 + k] = raw[k]
+  }
+  return rsiByBar
+}
+
+/** Ligne MACD (EMA12 − EMA26) par bougie. */
+function buildMacdLineByBar(closes) {
+  const emaFast = ema(closes, 12)
+  const emaSlow = ema(closes, 26)
+  return Array.from({ length: closes.length }, (_, i) =>
+    emaFast[i] != null && emaSlow[i] != null ? emaFast[i] - emaSlow[i] : null,
+  )
+}
+
+function findPivotLowIndices(candles, pivot = 3, lookback = 90) {
+  const n = candles.length
+  const start = Math.max(pivot, n - lookback)
+  const idx = []
+  for (let i = pivot; i < n - pivot; i++) {
+    if (i < start) continue
+    const low = candles[i].low
+    let isPivot = true
+    for (let j = i - pivot; j <= i + pivot; j++) {
+      if (j !== i && candles[j].low <= low) {
+        isPivot = false
+        break
+      }
+    }
+    if (isPivot) idx.push(i)
+  }
+  return idx
+}
+
+function findPivotHighIndices(candles, pivot = 3, lookback = 90) {
+  const n = candles.length
+  const start = Math.max(pivot, n - lookback)
+  const idx = []
+  for (let i = pivot; i < n - pivot; i++) {
+    if (i < start) continue
+    const high = candles[i].high
+    let isPivot = true
+    for (let j = i - pivot; j <= i + pivot; j++) {
+      if (j !== i && candles[j].high >= high) {
+        isPivot = false
+        break
+      }
+    }
+    if (isPivot) idx.push(i)
+  }
+  return idx
+}
+
+/**
+ * Divergences sur pivots (2 derniers creux / 2 derniers sommets).
+ * Classique haussière : prix LL, oscillateur HL. Cachée haussière : prix HL, oscillateur LL.
+ */
+function detectOscillatorDivergence(candles, oscByBar, oscName) {
+  const pivot = 3
+  const lookback = 90
+  const messages = []
+  let hasBullish = false
+  let hasBearish = false
+
+  const lowIdx = findPivotLowIndices(candles, pivot, lookback)
+  if (lowIdx.length >= 2) {
+    const a = lowIdx[lowIdx.length - 2]
+    const b = lowIdx[lowIdx.length - 1]
+    const pl = candles[a].low
+    const pl2 = candles[b].low
+    const oa = oscByBar[a]
+    const ob = oscByBar[b]
+    if (Number.isFinite(oa) && Number.isFinite(ob)) {
+      if (pl2 < pl && ob > oa) {
+        hasBullish = true
+        messages.push(
+          oscName === 'RSI'
+            ? '📈 Divergence haussière RSI (classique) détectée'
+            : '📈 Divergence haussière MACD (classique) détectée',
+        )
+      } else if (pl2 > pl && ob < oa) {
+        hasBullish = true
+        messages.push(
+          oscName === 'RSI'
+            ? '📈 Divergence haussière RSI (cachée) détectée'
+            : '📈 Divergence haussière MACD (cachée) détectée',
+        )
+      }
+    }
+  }
+
+  const highIdx = findPivotHighIndices(candles, pivot, lookback)
+  if (highIdx.length >= 2) {
+    const a = highIdx[highIdx.length - 2]
+    const b = highIdx[highIdx.length - 1]
+    const ph = candles[a].high
+    const ph2 = candles[b].high
+    const oa = oscByBar[a]
+    const ob = oscByBar[b]
+    if (Number.isFinite(oa) && Number.isFinite(ob)) {
+      if (ph2 > ph && ob < oa) {
+        hasBearish = true
+        messages.push(
+          oscName === 'RSI'
+            ? '📉 Divergence baissière RSI (classique) détectée'
+            : '📉 Divergence baissière MACD (classique) détectée',
+        )
+      } else if (ph2 < ph && ob > oa) {
+        hasBearish = true
+        messages.push(
+          oscName === 'RSI'
+            ? '📉 Divergence baissière RSI (cachée) détectée'
+            : '📉 Divergence baissière MACD (cachée) détectée',
+        )
+      }
+    }
+  }
+
+  return { messages, hasBullish, hasBearish }
+}
+
+function mergeDivergenceDetections(candles, closes) {
+  if (!candles?.length || closes.length < 40) {
+    return {
+      messages: [],
+      scoreAdjust: 0,
+      hasBullish: false,
+      hasBearish: false,
+      summary: 'Donnees insuffisantes pour divergences',
+    }
+  }
+  const rsiByBar = buildRsiByBar(closes)
+  const macdLine = buildMacdLineByBar(closes)
+  const r = detectOscillatorDivergence(candles, rsiByBar, 'RSI')
+  const m = detectOscillatorDivergence(candles, macdLine, 'MACD')
+  const messages = [...r.messages, ...m.messages]
+  const hasBullish = r.hasBullish || m.hasBullish
+  const hasBearish = r.hasBearish || m.hasBearish
+  let scoreAdjust = 0
+  if (hasBullish && !hasBearish) scoreAdjust = 15
+  else if (hasBearish && !hasBullish) scoreAdjust = -15
+  const summary =
+    messages.length > 0 ? messages.join(' | ') : 'Aucune divergence RSI/MACD significative sur les pivots recents'
+  return { messages, scoreAdjust, hasBullish, hasBearish, summary }
+}
+
 function scoreToBadgeClass(score) {
   if (score > 75) return 'badge--good'
   if (score >= 50) return 'badge--mid'
@@ -865,6 +1015,14 @@ function buildConfluenceResult(mtfMap) {
   const m15 = mtfMap['15m']
   if (!d1 || !h4 || !m15) return null
 
+  const div = m15.divergences ?? {
+    messages: [],
+    scoreAdjust: 0,
+    hasBullish: false,
+    hasBearish: false,
+    summary: '',
+  }
+
   const scores = {
     '1D': d1.score,
     '4H': h4.score,
@@ -877,9 +1035,13 @@ function buildConfluenceResult(mtfMap) {
   const alignedCount = Math.max(longAligned, shortAligned)
   const dominantDirection = longAligned >= shortAligned ? 'LONG' : 'SHORT'
 
-  // Score final pondéré : 1D x3, 4H x2, 15m x1 → /6 pour 0-100
+  // Score final pondéré : 1D x3, 4H x2, 15m x1 → /6 pour 0-100, puis ajustement divergences (±15)
   const weightedScore = Math.round(
-    clamp((scores['1D'] * 3 + scores['4H'] * 2 + scores['15m'] * 1) / 6, 0, 100)
+    clamp(
+      (scores['1D'] * 3 + scores['4H'] * 2 + scores['15m'] * 1) / 6 + (div.scoreAdjust || 0),
+      0,
+      100,
+    ),
   )
 
   const rsi = m15.indicators.rsi
@@ -915,6 +1077,9 @@ function buildConfluenceResult(mtfMap) {
   const patternCheckLong = cp?.bullish === true
   const patternCheckShort = cp?.bullish === false
 
+  const divergenceCheckLong = div.hasBullish && !div.hasBearish
+  const divergenceCheckShort = div.hasBearish && !div.hasBullish
+
   const longChecks = [
     score1dOkLong,
     score4hOkLong,
@@ -926,6 +1091,7 @@ function buildConfluenceResult(mtfMap) {
     ichimokuAbove,
     stochRsiFavLong,
     patternCheckLong,
+    divergenceCheckLong,
   ]
 
   const shortChecks = [
@@ -939,6 +1105,7 @@ function buildConfluenceResult(mtfMap) {
     !ichimokuAbove,
     stochRsiFavShort,
     patternCheckShort,
+    divergenceCheckShort,
   ]
 
   const longCount = longChecks.filter(Boolean).length
@@ -994,6 +1161,7 @@ function buildConfluenceResult(mtfMap) {
           'Prix > nuage Ichimoku',
           'Stoch RSI zone favorable',
           'Pattern de retournement détecté',
+          'Divergence RSI/MACD favorable',
         ]
       : [
           'Score 1D < 25',
@@ -1006,6 +1174,7 @@ function buildConfluenceResult(mtfMap) {
           'Prix < nuage Ichimoku',
           'Stoch RSI zone favorable',
           'Pattern de retournement détecté',
+          'Divergence RSI/MACD favorable',
         ]
 
   return {
@@ -1019,7 +1188,9 @@ function buildConfluenceResult(mtfMap) {
     signalTone,
     checklist: checkLabels.map((label, i) => ({ label, ok: checks[i] })),
     checksPassed,
-    checksTotal: 10,
+    checksTotal: 11,
+    divergenceMessages: div.messages ?? [],
+    divergenceSummary: div.summary ?? '',
     trade: m15.trade,
     indicators: m15.indicators,
   }
@@ -1135,6 +1306,13 @@ function simulateComputedForItem(item, prevSim) {
         BB: bbActive,
         'Stoch RSI': stochKSim < 20 && isLong,
         'Williams %R': (williamsRSim < -80 && isLong) || (williamsRSim > -20 && !isLong),
+      },
+      divergences: {
+        messages: [],
+        scoreAdjust: 0,
+        hasBullish: false,
+        hasBearish: false,
+        summary: 'Simulation — divergences non calculees sur donnees fictives',
       },
     },
     nextSim: { score, entry },
@@ -1285,6 +1463,7 @@ function computeIndicatorsAndTrade(candles) {
       'Stoch RSI': stochRsiFavLong && isLong ? true : stochRsiFavShort && !isLong,
       'Williams %R': williamsActive,
     },
+    divergences: mergeDivergenceDetections(candles, closes),
   }
 }
 
@@ -1427,15 +1606,20 @@ function SignalIdealPanel({
     const macroLine = macroContext?.macroImminent
       ? 'ATTENTION: evenement macro majeur possible dans les 2 prochaines heures.'
       : 'Pas d\'alerte calendrier macro imminente.'
+    const divLine =
+      conf.divergenceSummary && String(conf.divergenceSummary).trim()
+        ? `Divergences RSI/MACD (15m): ${conf.divergenceSummary}`
+        : 'Divergences RSI/MACD: non disponibles'
     const prompt = `Tu es un expert en trading. Analyse ces données techniques et donne un avis concis en français :
 actif=${item.label}
 scores timeframes: 1D=${conf.mtfScores['1D']} | 4H=${conf.mtfScores['4H']} | 15m=${conf.mtfScores['15m']}
 ${fgLine}
 ${macroLine}
+${divLine}
 indicateurs: RSI=${Number.isFinite(indicators.rsi) ? indicators.rsi.toFixed(2) : 'NA'}, MACD.hist=${Number.isFinite(indicators?.macd?.hist) ? indicators.macd.hist.toFixed(5) : 'NA'}, Stoch RSI=${Number.isFinite(indicators.stochRsi?.k) ? indicators.stochRsi.k.toFixed(1) : 'NA'}, Williams %R=${Number.isFinite(indicators.williamsR) ? indicators.williamsR.toFixed(1) : 'NA'}, Ichimoku=${indicators.ichimoku?.aboveCloud ? 'au-dessus nuage' : 'sous nuage'}${indicators.candlestickPattern?.name ? `, Pattern chandelier=${indicators.candlestickPattern.name} (${indicators.candlestickPattern.bullish ? 'haussiere' : 'baissiere'})` : ''}
 direction recommandee=${conf.recommendation}
 checklist validee=${conf.checksPassed}/${conf.checksTotal}
-Dis si c'est un bon setup ou pas et pourquoi.
+Dis si c'est un bon setup ou pas et pourquoi. Tiens compte des divergences signalees si presentes.
 Maximum 5 lignes.`
 
     setAiLoading(true)
@@ -1508,6 +1692,16 @@ Maximum 5 lignes.`
           {conf.checksPassed}/{conf.checksTotal} criteres valides
         </div>
       </div>
+
+      {Array.isArray(conf.divergenceMessages) && conf.divergenceMessages.length > 0 && (
+        <div className="divergence-alerts" role="status">
+          {conf.divergenceMessages.map((msg, i) => (
+            <div key={`${msg}-${i}`} className="divergence-line mono">
+              {msg}
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="signals signals--checklist">
         <div className="signals-title syne">Checklist</div>

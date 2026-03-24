@@ -545,6 +545,25 @@ body:has(.scanner-app) {
   margin-bottom: 6px;
 }
 
+.divergence-alerts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--sc-border, #1e2d45);
+  background: rgba(0, 229, 160, 0.06);
+}
+
+.divergence-line {
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  line-height: 1.35;
+  text-align: left;
+}
+
 .hamburger-btn {
   display: none;
   width: 42px;
