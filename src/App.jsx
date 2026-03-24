@@ -14,7 +14,7 @@ function getDivergencePlaceholderSummary(item) {
     return 'Clé Twelve Data manquante (VITE_TWELVE_DATA_KEY). Les divergences RSI/MACD seront calculées sur les bougies Twelve Data une fois la clé configurée.'
   }
   if (item?.twelveSymbol && TWELVE_DATA_KEY) {
-    return 'Chargement des bougies Twelve Data (Forex / indices / matières) — divergences calculées après réception des OHLC.'
+    return 'Chargement des bougies Twelve Data (Forex / matières) — divergences calculées après réception des OHLC.'
   }
   if (item?.binanceSymbol) {
     return 'Chargement des bougies Binance — divergences calculées après réception des OHLC.'
@@ -28,7 +28,7 @@ const LS_TELEGRAM_LAST = 'scanner-pro-telegram-last-alert'
 const LS_CALENDAR_CACHE = 'scanner-pro-calendar-cache'
 const CALENDAR_CLIENT_TTL_MS = 60 * 60 * 1000
 
-const FILTERS = ['Tous', 'Crypto', 'Forex', 'Indices', 'Matières', '🔥 Signaux forts']
+const FILTERS = ['Tous', 'Crypto', 'Forex', 'Matières', '🔥 Signaux forts']
 const STRONG_SIGNAL_FILTER = '🔥 Signaux forts'
 
 // Twelve Data: 15min pour Forex intraday (au lieu de 1day)
@@ -68,20 +68,15 @@ const WATCHLIST = [
   { label: 'EUR/JPY', category: 'Forex', tvSymbol: 'FX:EURJPY', twelveSymbol: 'EUR/JPY', decimals: 3, simBasePrice: 165 },
   { label: 'GBP/JPY', category: 'Forex', tvSymbol: 'FX:GBPJPY', twelveSymbol: 'GBP/JPY', decimals: 3, simBasePrice: 192 },
 
-  // Indices
-  { label: 'NAS100', category: 'Indices', tvSymbol: 'TVC:NDX', twelveSymbol: 'NDX', decimals: 2, simBasePrice: 18000 },
-  { label: 'SP500', category: 'Indices', tvSymbol: 'TVC:SPX', twelveSymbol: 'SPX', decimals: 2, simBasePrice: 5200 },
-
-  // Matières
+  // Matières (Twelve Data)
   { label: 'XAU/USD', category: 'Matières', tvSymbol: 'OANDA:XAUUSD', twelveSymbol: 'XAU/USD', decimals: 2, simBasePrice: 2200 },
   { label: 'XAG/USD', category: 'Matières', tvSymbol: 'OANDA:XAGUSD', twelveSymbol: 'XAG/USD', decimals: 2, simBasePrice: 26 },
-  { label: 'WTI/USD', category: 'Matières', tvSymbol: 'TVC:USOIL', decimals: 2, simBasePrice: 75 },
+  { label: 'WTI/USD', category: 'Matières', tvSymbol: 'TVC:USOIL', twelveSymbol: 'WTI/USD', decimals: 2, simBasePrice: 75 },
 ]
 
 const SIM_PROFILE_BY_CATEGORY = {
   Crypto: { entryVolPct: 0.004, atrPct: 0.012, emaDiffPct: 0.010 },
   Forex: { entryVolPct: 0.0006, atrPct: 0.0012, emaDiffPct: 0.0025 },
-  Indices: { entryVolPct: 0.0035, atrPct: 0.008, emaDiffPct: 0.010 },
   'Matières': { entryVolPct: 0.0025, atrPct: 0.006, emaDiffPct: 0.009 },
 }
 
@@ -2651,7 +2646,7 @@ export default function App() {
       </main>
 
       <footer className="scanner-footer">
-        Scores multi-timeframe 1D/4H/15m. Sources: Binance (crypto) + Twelve Data (forex/indices/matieres). Chart: TradingView ({selectedTimeframe.tradingViewInterval}).
+        {`Données : Binance (crypto) + Twelve Data (forex/matières). Scores multi-timeframe 1D/4H/15m. Chart : TradingView (${selectedTimeframe.tradingViewInterval}).`}
       </footer>
     </div>
   )
