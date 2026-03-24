@@ -13,6 +13,11 @@ const BINANCE_KLINE_MAX = 1000
 const BACKTEST_FETCH_LIMIT = 1000
 /** Libellés UI (doit rester aligné avec BACKTEST_BARS / BACKTEST_15M_REQUIRED). */
 const BACKTEST_TITLE_LABEL = '1000 bougies 15m (~10 j)'
+/** Backtest : seuils plus stricts que le scanner pour limiter les faux signaux. */
+const BACKTEST_SIGNAL_LONG_MIN = 80
+const BACKTEST_SIGNAL_SHORT_MAX = 20
+/** Au moins 2 timeframes sur 3 alignés (direction trade) pour valider un signal. */
+const BACKTEST_MTF_ALIGN_MIN = 2
 const SCORE_HISTORY_LEN = 24
 const TWELVE_DATA_KEY = import.meta.env.VITE_TWELVE_DATA_KEY
 const CLAUDE_MODEL = 'claude-haiku-4-5-20251001'
@@ -1540,6 +1545,8 @@ function runBacktestOnCandles(m15, h4, d1) {
 
   const trades = []
   let openUntil = -1
+  let filteredByThreshold = 0
+  let filteredByAlignment = 0
 
   for (let i = startIdx; i <= endIdx; i++) {
     if (i < BACKTEST_WARMUP_BARS) continue
@@ -1561,9 +1568,21 @@ function runBacktestOnCandles(m15, h4, d1) {
     if (!conf) continue
 
     const score = conf.score
+    const dirs = [cd.trade.direction, c4.trade.direction, c15.trade.direction]
+    const longTfCount = dirs.filter((d) => d === 'LONG').length
+    const shortTfCount = dirs.filter((d) => d === 'SHORT').length
+    const alignLong = longTfCount >= BACKTEST_MTF_ALIGN_MIN
+    const alignShort = shortTfCount >= BACKTEST_MTF_ALIGN_MIN
+
+    // Ancienne zone "large" (75 / 25) : compté comme filtré par seuils stricts
+    if (score > 75 && score < BACKTEST_SIGNAL_LONG_MIN) filteredByThreshold++
+    if (score < 25 && score > BACKTEST_SIGNAL_SHORT_MAX) filteredByThreshold++
+    if (score >= BACKTEST_SIGNAL_LONG_MIN && !alignLong) filteredByAlignment++
+    if (score <= BACKTEST_SIGNAL_SHORT_MAX && !alignShort) filteredByAlignment++
+
     let direction = null
-    if (score > 75) direction = 'LONG'
-    else if (score < 25) direction = 'SHORT'
+    if (score >= BACKTEST_SIGNAL_LONG_MIN && alignLong) direction = 'LONG'
+    else if (score <= BACKTEST_SIGNAL_SHORT_MAX && alignShort) direction = 'SHORT'
     else continue
 
     const entry = m15[i].close
@@ -1645,6 +1664,12 @@ function runBacktestOnCandles(m15, h4, d1) {
       lowTradeSample: total < 30,
       m15BarsReceived: m15.length,
       m15BarsRequested: BACKTEST_15M_REQUIRED,
+      backtestLongMinScore: BACKTEST_SIGNAL_LONG_MIN,
+      backtestShortMaxScore: BACKTEST_SIGNAL_SHORT_MAX,
+      mtfAlignMin: BACKTEST_MTF_ALIGN_MIN,
+      filteredSignalsTotal: filteredByThreshold + filteredByAlignment,
+      filteredByThreshold,
+      filteredByAlignment,
     },
     equityCurve: curve,
   }
@@ -1794,6 +1819,15 @@ function BacktestPanel({ open, onClose, item, loading, error, data, onExportCsv 
                   {Number.isFinite(s.periodDaysCovered)
                     ? `${s.periodDaysCovered.toFixed(1)} jours`
                     : '—'}
+                </div>
+                <div>
+                  🎯 Seuils utilisés : LONG ≥ {s.backtestLongMinScore ?? BACKTEST_SIGNAL_LONG_MIN} | SHORT ≤{' '}
+                  {s.backtestShortMaxScore ?? BACKTEST_SIGNAL_SHORT_MAX} · MTF alignés ≥{' '}
+                  {s.mtfAlignMin ?? BACKTEST_MTF_ALIGN_MIN}/3
+                </div>
+                <div>
+                  📉 Signaux filtrés : {s.filteredSignalsTotal ?? '—'} (seuils stricts vs ancien 75/25 :{' '}
+                  {s.filteredByThreshold ?? '—'}, alignement MTF : {s.filteredByAlignment ?? '—'})
                 </div>
                 <div className="backtest-sep">─────────────────────────────</div>
                 <div>📈 Trades totaux : {total}</div>
