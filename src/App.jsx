@@ -30,12 +30,25 @@ const CALENDAR_CLIENT_TTL_MS = 60 * 60 * 1000
 const LS_POSITION_CAPITAL = 'scanner-pro-position-capital'
 const LS_POSITION_RISK = 'scanner-pro-position-risk'
 const LS_POSITION_ACCOUNT = 'scanner-pro-position-account-type'
+const LS_FAVORITES = 'scanner-pro-favorites'
 
 /** Unités de base par lot forex (MT4) selon type de compte */
 const FOREX_LOT_UNITS = { Standard: 100000, Mini: 10000, Micro: 1000 }
 
-const FILTERS = ['Tous', 'Crypto', 'Forex', 'Matières', '🔥 Signaux forts']
+const FAVORITES_FILTER = '⭐ Favoris'
+const FILTERS = ['Tous', FAVORITES_FILTER, 'Crypto', 'Forex', 'Matières', '🔥 Signaux forts']
 const STRONG_SIGNAL_FILTER = '🔥 Signaux forts'
+
+function readFavoritesFromStorage() {
+  try {
+    const raw = localStorage.getItem(LS_FAVORITES)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.filter((x) => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
 
 // Twelve Data: 15min pour Forex intraday (au lieu de 1day)
 const MTF_TIMEFRAMES = [
@@ -272,7 +285,102 @@ function WatchlistPanel({
   scoreHistory,
   scorePulse,
   macroContext,
+  favoriteSymbols,
+  onToggleFavorite,
 }) {
+  const favoriteSet = useMemo(() => new Set(favoriteSymbols), [favoriteSymbols])
+
+  const { favoriteRows, otherRows } = useMemo(() => {
+    const favoriteRows = []
+    const otherRows = []
+    for (const item of visibleItems) {
+      if (favoriteSet.has(item.tvSymbol)) favoriteRows.push(item)
+      else otherRows.push(item)
+    }
+    return { favoriteRows, otherRows }
+  }, [visibleItems, favoriteSet])
+
+  const renderItem = (item) => {
+    const isActive = item.tvSymbol === selectedTvSymbol
+    const isFavorite = favoriteSet.has(item.tvSymbol)
+    const result = scanResults[item.tvSymbol]
+    const adj = result?.confluence
+      ? applyMacroToConfluence(result.confluence, macroContext)
+      : null
+    const score = typeof adj?.score === 'number' ? adj.score : null
+    const mtfScores = result?.confluence?.mtfScores
+
+    const values = (scoreHistory[item.tvSymbol] && scoreHistory[item.tvSymbol].length >= 2)
+      ? scoreHistory[item.tvSymbol]
+      : typeof score === 'number'
+        ? [score, score]
+        : [50, 50]
+
+    const tone = score == null ? 'mid' : score > 65 ? 'good' : score < 40 ? 'bad' : 'mid'
+
+    return (
+      <div key={item.tvSymbol} className="watchlist-item-wrap">
+        <div
+          className={`watchlist-item ${isActive ? 'is-active' : ''}`}
+          role="button"
+          tabIndex={0}
+          onClick={() => onPickSymbol(item.tvSymbol)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              onPickSymbol(item.tvSymbol)
+            }
+          }}
+        >
+          <div className="watchlist-item-head">
+            <span className="watchlist-label-row">
+              <button
+                type="button"
+                className="watchlist-star"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onToggleFavorite(item.tvSymbol)
+                }}
+                aria-pressed={isFavorite}
+                aria-label={isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
+                title={isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
+              >
+                {isFavorite ? '⭐' : '☆'}
+              </button>
+              <span className="watchlist-label">{item.label}</span>
+            </span>
+            <div
+              className={`watchlist-score-wrap ${scorePulse[item.tvSymbol] ? 'watchlist-score-pulse' : ''}`}
+            >
+              {score == null ? (
+                <span className="watchlist-score-dash mono">—</span>
+              ) : (
+                <ScoreRing score={score} size={56} strokeWidth={5} />
+              )}
+            </div>
+          </div>
+          <div className="watchlist-mtf-badges">
+            {[
+              { key: '1D', label: '1D' },
+              { key: '4H', label: '4H' },
+              { key: '15m', label: '15m' },
+            ].map(({ key, label }) => {
+              const v = mtfScores?.[key]
+              return (
+                <span key={key} className={`mtf-badge ${mtfBadgeClass(v)}`}>
+                  {label} {v == null ? '—' : v}
+                </span>
+              )
+            })}
+          </div>
+          <div className="watchlist-sparkline-wrap">
+            <Sparkline values={values} tone={tone} />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <>
       <div className="panel-title syne">Watchlist</div>
@@ -291,62 +399,20 @@ function WatchlistPanel({
       </div>
 
       <div className="watchlist">
-        {visibleItems.map((item) => {
-          const isActive = item.tvSymbol === selectedTvSymbol
-          const result = scanResults[item.tvSymbol]
-          const adj = result?.confluence
-            ? applyMacroToConfluence(result.confluence, macroContext)
-            : null
-          const score = typeof adj?.score === 'number' ? adj.score : null
-          const mtfScores = result?.confluence?.mtfScores
-
-          const values = (scoreHistory[item.tvSymbol] && scoreHistory[item.tvSymbol].length >= 2)
-            ? scoreHistory[item.tvSymbol]
-            : typeof score === 'number'
-              ? [score, score]
-              : [50, 50]
-
-          const tone = score == null ? 'mid' : score > 65 ? 'good' : score < 40 ? 'bad' : 'mid'
-
-          return (
-            <button
-              key={item.tvSymbol}
-              type="button"
-              className={`watchlist-item ${isActive ? 'is-active' : ''}`}
-              onClick={() => onPickSymbol(item.tvSymbol)}
-            >
-              <div className="watchlist-item-head">
-                <span className="watchlist-label">{item.label}</span>
-                <div
-                  className={`watchlist-score-wrap ${scorePulse[item.tvSymbol] ? 'watchlist-score-pulse' : ''}`}
-                >
-                  {score == null ? (
-                    <span className="watchlist-score-dash mono">—</span>
-                  ) : (
-                    <ScoreRing score={score} size={56} strokeWidth={5} />
-                  )}
-                </div>
-              </div>
-              <div className="watchlist-mtf-badges">
-                {[
-                  { key: '1D', label: '1D' },
-                  { key: '4H', label: '4H' },
-                  { key: '15m', label: '15m' },
-                ].map(({ key, label }) => {
-                  const v = mtfScores?.[key]
-                  return (
-                    <span key={key} className={`mtf-badge ${mtfBadgeClass(v)}`}>
-                      {label} {v == null ? '—' : v}
-                    </span>
-                  )
-                })}
-              </div>
-              <div className="watchlist-sparkline-wrap">
-                <Sparkline values={values} tone={tone} />
-              </div>
-            </button>
-          )
-        })}
+        {visibleItems.length === 0 && (
+          <div className="watchlist-empty">
+            {filter === FAVORITES_FILTER ? 'Aucun favori — cliquez sur ☆ pour en ajouter.' : 'Aucun actif dans ce filtre.'}
+          </div>
+        )}
+        {favoriteRows.map(renderItem)}
+        {favoriteRows.length > 0 && otherRows.length > 0 && (
+          <div className="watchlist-separator" role="separator" aria-hidden="true">
+            <span className="watchlist-separator-line" />
+            <span className="watchlist-separator-text">Autres actifs</span>
+            <span className="watchlist-separator-line" />
+          </div>
+        )}
+        {otherRows.map(renderItem)}
       </div>
 
       <div className="panel-help">Scores recalcules toutes les {Math.round(POLL_MS / 1000)}s.</div>
@@ -2076,13 +2142,31 @@ Maximum 5 lignes.`
 
 export default function App() {
   const [filter, setFilter] = useState('Tous')
-  const categoryItems = useMemo(
-    () =>
-      filter === 'Tous' || filter === STRONG_SIGNAL_FILTER
-        ? WATCHLIST
-        : WATCHLIST.filter((x) => x.category === filter),
-    [filter],
-  )
+  const [favoriteSymbols, setFavoriteSymbols] = useState(() => readFavoritesFromStorage())
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_FAVORITES, JSON.stringify(favoriteSymbols))
+    } catch {
+      /* ignore */
+    }
+  }, [favoriteSymbols])
+
+  const toggleFavorite = useCallback((sym) => {
+    setFavoriteSymbols((prev) => {
+      const s = new Set(prev)
+      if (s.has(sym)) s.delete(sym)
+      else s.add(sym)
+      return [...s]
+    })
+  }, [])
+
+  const categoryItems = useMemo(() => {
+    if (filter === STRONG_SIGNAL_FILTER) return WATCHLIST
+    if (filter === FAVORITES_FILTER) return WATCHLIST.filter((x) => favoriteSymbols.includes(x.tvSymbol))
+    if (filter === 'Tous') return WATCHLIST
+    return WATCHLIST.filter((x) => x.category === filter)
+  }, [filter, favoriteSymbols])
 
   const [selectedTvSymbol, setSelectedTvSymbol] = useState(WATCHLIST[0].tvSymbol)
   // Un seul state pour chart + contexte (boutons timeframe)
@@ -2746,6 +2830,8 @@ export default function App() {
             scoreHistory={scoreHistory}
             scorePulse={scorePulse}
             macroContext={macroContext}
+            favoriteSymbols={favoriteSymbols}
+            onToggleFavorite={toggleFavorite}
           />
           <NewsPanel
             articles={newsArticles}
@@ -2786,6 +2872,8 @@ export default function App() {
                 scoreHistory={scoreHistory}
                 scorePulse={scorePulse}
                 macroContext={macroContext}
+                favoriteSymbols={favoriteSymbols}
+                onToggleFavorite={toggleFavorite}
               />
             </div>
           </div>

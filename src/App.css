@@ -829,6 +829,10 @@ body:has(.scanner-app) {
   gap: 10px;
 }
 
+.watchlist-item-wrap {
+  width: 100%;
+}
+
 .watchlist-item {
   width: 100%;
   text-align: left;
@@ -843,6 +847,77 @@ body:has(.scanner-app) {
   cursor: pointer;
   min-height: auto;
   transition: border-color 0.22s ease, background 0.22s ease, box-shadow 0.22s ease, transform 0.18s ease;
+  box-sizing: border-box;
+}
+
+.watchlist-item:focus-visible {
+  outline: 2px solid rgba(0, 229, 160, 0.45);
+  outline-offset: 2px;
+}
+
+.watchlist-label-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.watchlist-star {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: rgba(30, 45, 69, 0.45);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, transform 0.12s ease;
+}
+
+.watchlist-star:hover {
+  background: rgba(0, 229, 160, 0.15);
+  transform: scale(1.06);
+}
+
+.watchlist-star:focus-visible {
+  outline: 2px solid rgba(0, 229, 160, 0.55);
+  outline-offset: 1px;
+}
+
+.watchlist-separator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0;
+  padding: 4px 0;
+}
+
+.watchlist-separator-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--sc-border, #1e2d45), transparent);
+}
+
+.watchlist-separator-text {
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--sc-muted, #8b9cb8);
+  white-space: nowrap;
+}
+
+.watchlist-empty {
+  font-size: 12px;
+  color: var(--sc-muted, #8b9cb8);
+  padding: 12px 8px;
+  text-align: left;
+  line-height: 1.4;
 }
 
 .watchlist-item-head {
