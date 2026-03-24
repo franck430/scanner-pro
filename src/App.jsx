@@ -1330,6 +1330,107 @@ function computeATR(candles, period = 14) {
   return atr
 }
 
+/**
+ * ADX (14) Wilder : TR, +DM/−DM lissés, +DI/−DI, DX puis ADX = lissage Wilder sur DX.
+ */
+function computeADX(candles, period = 14) {
+  const n = candles?.length ?? 0
+  const minBars = 2 * period + 1
+  if (n < minBars) return null
+
+  const tr = new Array(n)
+  const plusDM = new Array(n).fill(0)
+  const minusDM = new Array(n).fill(0)
+
+  tr[0] = candles[0].high - candles[0].low
+  for (let i = 1; i < n; i++) {
+    const h = candles[i].high
+    const l = candles[i].low
+    const pc = candles[i - 1].close
+    tr[i] = Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc))
+    const upMove = h - candles[i - 1].high
+    const downMove = candles[i - 1].low - l
+    if (upMove > downMove && upMove > 0) plusDM[i] = upMove
+    if (downMove > upMove && downMove > 0) minusDM[i] = downMove
+  }
+
+  const smoothTR = new Array(n).fill(null)
+  const smoothPlus = new Array(n).fill(null)
+  const smoothMinus = new Array(n).fill(null)
+
+  let sumTR = 0
+  let sumP = 0
+  let sumM = 0
+  for (let i = 0; i < period; i++) {
+    sumTR += tr[i]
+    sumP += plusDM[i]
+    sumM += minusDM[i]
+  }
+  smoothTR[period - 1] = sumTR
+  smoothPlus[period - 1] = sumP
+  smoothMinus[period - 1] = sumM
+  for (let i = period; i < n; i++) {
+    smoothTR[i] = smoothTR[i - 1] - smoothTR[i - 1] / period + tr[i]
+    smoothPlus[i] = smoothPlus[i - 1] - smoothPlus[i - 1] / period + plusDM[i]
+    smoothMinus[i] = smoothMinus[i - 1] - smoothMinus[i - 1] / period + minusDM[i]
+  }
+
+  const plusDI = new Array(n).fill(null)
+  const minusDI = new Array(n).fill(null)
+  const dx = new Array(n).fill(null)
+  for (let i = period - 1; i < n; i++) {
+    const str = smoothTR[i]
+    if (str == null || str === 0) continue
+    const pdi = (100 * smoothPlus[i]) / str
+    const mdi = (100 * smoothMinus[i]) / str
+    plusDI[i] = pdi
+    minusDI[i] = mdi
+    const diSum = pdi + mdi
+    dx[i] = diSum === 0 ? 0 : (100 * Math.abs(pdi - mdi)) / diSum
+  }
+
+  const firstAdxIdx = 2 * period - 2
+  if (firstAdxIdx >= n) return null
+  let sumDx = 0
+  for (let i = period - 1; i <= 2 * period - 2; i++) sumDx += dx[i] ?? 0
+  const adxSeries = new Array(n).fill(null)
+  adxSeries[firstAdxIdx] = sumDx / period
+  for (let i = firstAdxIdx + 1; i < n; i++) {
+    adxSeries[i] = (adxSeries[i - 1] * (period - 1) + (dx[i] ?? 0)) / period
+  }
+
+  const adx = adxSeries[n - 1]
+  if (adx == null || !Number.isFinite(adx)) return null
+  const pi = plusDI[n - 1]
+  const mi = minusDI[n - 1]
+  return {
+    adx,
+    plusDI: pi != null && Number.isFinite(pi) ? pi : null,
+    minusDI: mi != null && Number.isFinite(mi) ? mi : null,
+  }
+}
+
+function adxScoreAdjust(adx) {
+  if (adx == null || !Number.isFinite(adx)) return -15
+  if (adx > 25) return 15
+  if (adx >= 20) return 5
+  return -15
+}
+
+function formatAdxSignalLine(adx) {
+  if (adx == null || !Number.isFinite(adx)) return '📊 ADX: —'
+  if (adx > 25) return `📊 ADX: ${adx.toFixed(1)} - Tendance forte ✅`
+  if (adx >= 20) return `📊 ADX: ${adx.toFixed(1)} - Tendance modérée ⚠️`
+  return `📊 ADX: ${adx.toFixed(1)} - Marché en range ❌`
+}
+
+function adxTrendLabelForPrompt(adx) {
+  if (adx == null || !Number.isFinite(adx)) return 'ADX: N/A (indisponible)'
+  if (adx > 25) return `ADX: ${adx.toFixed(1)} (tendance forte)`
+  if (adx >= 20) return `ADX: ${adx.toFixed(1)} (tendance modérée)`
+  return `ADX: ${adx.toFixed(1)} (range)`
+}
+
 /** Tous les pivots hauts sur les 100 dernières bougies. */
 function findPivotHighs(candles, pivot = 5) {
   const n = candles.length
@@ -1689,9 +1790,8 @@ function buildConfluenceResult(mtfMap, category = 'Forex', ctx = {}) {
   const stochKClassic = m15.indicators.stochastic?.k ?? m15.indicators.stochRsi?.k ?? 50
   const stochFavLong = stochKClassic < 30 || (stochKClassic >= 20 && stochKClassic <= 55)
   const stochFavShort = stochKClassic > 70 || (stochKClassic >= 45 && stochKClassic <= 80)
-  const cp = m15.indicators.candlestickPattern
-  const patternCheckLong = cp?.bullish === true
-  const patternCheckShort = cp?.bullish === false
+  const adx = m15.indicators?.adx
+  const adxStrongTrend = adx != null && Number.isFinite(adx) && adx > 25
   const divergenceCheckLong = div.hasBullish && !div.hasBearish
   const divergenceCheckShort = div.hasBearish && !div.hasBullish
 
@@ -1740,7 +1840,7 @@ function buildConfluenceResult(mtfMap, category = 'Forex', ctx = {}) {
       bbLongOk,
       volumeSpikeLong,
       false,
-      patternCheckLong,
+      adxStrongTrend,
       divergenceCheckLong,
     ]
     shortChecks = [
@@ -1753,7 +1853,7 @@ function buildConfluenceResult(mtfMap, category = 'Forex', ctx = {}) {
       bbShortOk,
       volumeSpikeShort,
       false,
-      patternCheckShort,
+      adxStrongTrend,
       divergenceCheckShort,
     ]
     longLabels = [
@@ -1766,7 +1866,7 @@ function buildConfluenceResult(mtfMap, category = 'Forex', ctx = {}) {
       'Prix au-dessus bande médiane (Bollinger)',
       'Volume 24h > moyenne 20 jours',
       'Fear & Greed aligné',
-      'Pattern de retournement détecté',
+      'ADX > 25 (tendance forte)',
       'Divergence RSI/MACD favorable',
     ]
     shortLabels = [
@@ -1779,7 +1879,7 @@ function buildConfluenceResult(mtfMap, category = 'Forex', ctx = {}) {
       'Prix sous bande médiane (Bollinger)',
       'Volume 24h > moyenne 20 jours',
       'Fear & Greed aligné',
-      'Pattern de retournement détecté',
+      'ADX > 25 (tendance forte)',
       'Divergence RSI/MACD favorable',
     ]
   } else if (category === 'Matières') {
@@ -1793,7 +1893,7 @@ function buildConfluenceResult(mtfMap, category = 'Forex', ctx = {}) {
       rrOk,
       atrVolOk,
       dxyFavLong,
-      patternCheckLong,
+      adxStrongTrend,
       divergenceCheckLong,
     ]
     shortChecks = [
@@ -1806,7 +1906,7 @@ function buildConfluenceResult(mtfMap, category = 'Forex', ctx = {}) {
       rrOk,
       atrVolOk,
       dxyFavShort,
-      patternCheckShort,
+      adxStrongTrend,
       divergenceCheckShort,
     ]
     longLabels = [
@@ -1819,7 +1919,7 @@ function buildConfluenceResult(mtfMap, category = 'Forex', ctx = {}) {
       'R/R > 2.0',
       'ATR / volatilité suffisante',
       'DXY aligné (réf. inverse Or)',
-      'Pattern de retournement détecté',
+      'ADX > 25 (tendance forte)',
       'Divergence RSI/MACD favorable',
     ]
     shortLabels = [
@@ -1832,7 +1932,7 @@ function buildConfluenceResult(mtfMap, category = 'Forex', ctx = {}) {
       'R/R > 2.0',
       'ATR / volatilité suffisante',
       'DXY aligné (réf. inverse Or)',
-      'Pattern de retournement détecté',
+      'ADX > 25 (tendance forte)',
       'Divergence RSI/MACD favorable',
     ]
   } else {
@@ -1846,7 +1946,7 @@ function buildConfluenceResult(mtfMap, category = 'Forex', ctx = {}) {
       rrOk,
       ichimokuAbove,
       pivotBetweenLong,
-      patternCheckLong,
+      adxStrongTrend,
       divergenceCheckLong,
     ]
     shortChecks = [
@@ -1859,7 +1959,7 @@ function buildConfluenceResult(mtfMap, category = 'Forex', ctx = {}) {
       rrOk,
       !ichimokuAbove,
       pivotBetweenShort,
-      patternCheckShort,
+      adxStrongTrend,
       divergenceCheckShort,
     ]
     longLabels = [
@@ -1872,7 +1972,7 @@ function buildConfluenceResult(mtfMap, category = 'Forex', ctx = {}) {
       'R/R > 2.0',
       'Prix > nuage Ichimoku',
       'Prix entre Pivot S1 et R1',
-      'Pattern de retournement détecté',
+      'ADX > 25 (tendance forte)',
       'Divergence RSI/MACD favorable',
     ]
     shortLabels = [
@@ -1885,7 +1985,7 @@ function buildConfluenceResult(mtfMap, category = 'Forex', ctx = {}) {
       'R/R > 2.0',
       'Prix < nuage Ichimoku',
       'Prix entre Pivot S1 et R1',
-      'Pattern de retournement détecté',
+      'ADX > 25 (tendance forte)',
       'Divergence RSI/MACD favorable',
     ]
   }
@@ -1928,6 +2028,15 @@ function buildConfluenceResult(mtfMap, category = 'Forex', ctx = {}) {
     checks = shortChecks
     checksPassed = shortCount
     checksDirection = 'SHORT'
+  }
+
+  if (
+    (recommendation === 'LONG' || recommendation === 'SHORT') &&
+    (adx == null || !Number.isFinite(adx) || adx <= 20)
+  ) {
+    recommendation = 'ATTENDRE'
+    signalBadge = 'EN ATTENTE'
+    signalTone = 'mid'
   }
 
   const checkLabels = checksDirection === 'LONG' ? longLabels : shortLabels
@@ -2167,6 +2276,9 @@ function runBacktestOnCandles(m15, h4, d1, category = 'Forex', itemLabel = '') {
     if (score >= BACKTEST_SIGNAL_LONG_MIN && alignLong) direction = 'LONG'
     else if (score <= BACKTEST_SIGNAL_SHORT_MAX && alignShort) direction = 'SHORT'
     else continue
+
+    const adxBt = c15.indicators?.adx
+    if (!Number.isFinite(adxBt) || adxBt <= 20) continue
 
     const entry = m15[i].close
     const { stopLoss: sl, takeProfit: tp } = c15.trade
@@ -2562,6 +2674,9 @@ function simulateComputedForItem(item, prevSim) {
         williamsR: williamsRSim,
         ichimoku: { aboveCloud: isLong },
         candlestickPattern: Math.random() > 0.7 ? { name: isLong ? 'Hammer' : 'Shooting Star', bullish: isLong } : null,
+        adx: 22 + Math.random() * 18,
+        plusDI: null,
+        minusDI: null,
       },
       trade: {
         direction,
@@ -2682,6 +2797,10 @@ function computeIndicatorsAndTrade(candles, category = 'Forex', opts = {}) {
     )
   }
 
+  const adxResult = computeADX(candles, 14)
+  const adxValue = adxResult?.adx ?? null
+  score = Math.round(clamp(score + adxScoreAdjust(adxValue), 0, 100))
+
   const bullishCount = (emaBull ? 1 : 0) + (rsiBull ? 1 : 0) + (macdBull ? 1 : 0)
   const direction = bullishCount >= 2 ? 'LONG' : 'SHORT'
   const isLong = direction === 'LONG'
@@ -2751,6 +2870,9 @@ function computeIndicatorsAndTrade(candles, category = 'Forex', opts = {}) {
       williamsR,
       ichimoku,
       candlestickPattern,
+      adx: adxValue,
+      plusDI: adxResult?.plusDI ?? null,
+      minusDI: adxResult?.minusDI ?? null,
     },
     trade: {
       direction,
@@ -2943,6 +3065,24 @@ function SignalIdealPanel({
   const rrPct = clamp(((rrClamped - 1.5) / (5.0 - 1.5)) * 100, 0, 100)
   const rrText = Number.isFinite(rrClamped) ? rrClamped.toFixed(2) : '—'
 
+  const adxv = indicators.adx
+  const adxBadgeTier =
+    adxv != null && Number.isFinite(adxv)
+      ? adxv > 25
+        ? 'adx-badge--strong'
+        : adxv >= 20
+          ? 'adx-badge--mid'
+          : 'adx-badge--weak'
+      : 'adx-badge--weak'
+  const adxChipClass =
+    adxv != null && Number.isFinite(adxv)
+      ? adxv > 25
+        ? 'is-green'
+        : adxv >= 20
+          ? 'is-orange'
+          : 'is-red'
+      : 'is-red'
+
   const slBarPct =
     slPips != null
       ? Math.min(100, (Math.abs(slPips) / 50) * 100)
@@ -2987,6 +3127,7 @@ scores timeframes: 1D=${conf.mtfScores['1D']} | 4H=${conf.mtfScores['4H']} | 15m
 ${fgLine}
 ${macroLine}
 ${divLine}
+${adxTrendLabelForPrompt(indicators.adx)}
 ${posLine} | Type compte : ${accountType}
 indicateurs: RSI=${Number.isFinite(indicators.rsi) ? indicators.rsi.toFixed(2) : 'NA'}, MACD.hist=${Number.isFinite(indicators?.macd?.hist) ? indicators.macd.hist.toFixed(5) : 'NA'}, Stoch RSI=${Number.isFinite(indicators.stochRsi?.k) ? indicators.stochRsi.k.toFixed(1) : 'NA'}, Williams %R=${Number.isFinite(indicators.williamsR) ? indicators.williamsR.toFixed(1) : 'NA'}, Ichimoku=${indicators.ichimoku?.aboveCloud ? 'au-dessus nuage' : 'sous nuage'}${indicators.candlestickPattern?.name ? `, Pattern chandelier=${indicators.candlestickPattern.name} (${indicators.candlestickPattern.bullish ? 'haussiere' : 'baissiere'})` : ''}
 direction recommandee=${conf.recommendation}
@@ -3046,6 +3187,10 @@ Maximum 5 lignes.`
           : scannerMode === SCANNER_MODE.CRYPTO
             ? 'Indicateurs Crypto'
             : 'Indicateurs Matières premières'}
+      </div>
+
+      <div className={`adx-badge ${adxBadgeTier}`} role="status">
+        {formatAdxSignalLine(adxv)}
       </div>
 
       <div className="panel-help">{conf.label}</div>
@@ -3342,6 +3487,9 @@ Maximum 5 lignes.`
           TF actif : {contextTfLabel ?? '—'} | RSI calculé : {Number.isFinite(indicators?.rsi) ? indicators.rsi.toFixed(1) : '—'}
         </div>
         <div className="signals-row">
+          <div className={`signal-chip signal-chip--adx ${adxChipClass}`} title="ADX 14 (Wilder)">
+            {formatAdxSignalLine(adxv)}
+          </div>
           <div className={`signal-chip ${indicators.rsi >= 50 ? 'is-green' : 'is-red'}`}>
             RSI {Number.isFinite(indicators.rsi) ? indicators.rsi.toFixed(1) : '—'}
           </div>

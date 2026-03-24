@@ -2396,6 +2396,45 @@ body:has(.scanner-app) {
   color: rgba(0, 229, 160, 0.98);
 }
 
+.signal-chip.is-orange {
+  border-color: rgba(255, 176, 32, 0.55);
+  background: rgba(255, 176, 32, 0.12);
+  color: rgba(255, 200, 80, 0.98);
+}
+
+.signal-chip--adx {
+  flex: 1 1 100%;
+  line-height: 1.4;
+}
+
+.adx-badge {
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 800;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.adx-badge--strong {
+  border-color: rgba(0, 229, 160, 0.45);
+  background: rgba(0, 229, 160, 0.1);
+  color: rgba(0, 229, 160, 0.98);
+}
+
+.adx-badge--mid {
+  border-color: rgba(255, 176, 32, 0.45);
+  background: rgba(255, 176, 32, 0.1);
+  color: rgba(255, 200, 80, 0.98);
+}
+
+.adx-badge--weak {
+  border-color: rgba(255, 61, 90, 0.45);
+  background: rgba(255, 61, 90, 0.1);
+  color: rgba(255, 120, 130, 0.98);
+}
+
 .ai-actions {
   margin-top: 14px;
   position: relative;
