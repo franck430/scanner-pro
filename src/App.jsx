@@ -4,6 +4,8 @@ import './App.css'
 const POLL_MS = 30000
 const BINANCE_LIMIT = 100
 const TWELVE_DATA_LIMIT = 100
+const BACKTEST_BARS = 200
+const BACKTEST_FETCH_LIMIT = 1000
 const SCORE_HISTORY_LEN = 24
 const TWELVE_DATA_KEY = import.meta.env.VITE_TWELVE_DATA_KEY
 const CLAUDE_MODEL = 'claude-haiku-4-5-20251001'
@@ -1352,6 +1354,439 @@ function buildConfluenceResult(mtfMap) {
   }
 }
 
+const INTERVAL_MS = {
+  '1m': 60 * 1000,
+  '5m': 5 * 60 * 1000,
+  '15m': 15 * 60 * 1000,
+  '15min': 15 * 60 * 1000,
+  '1h': 60 * 60 * 1000,
+  '4h': 4 * 60 * 60 * 1000,
+  '1d': 24 * 60 * 60 * 1000,
+  '1day': 24 * 60 * 60 * 1000,
+  '1w': 7 * 24 * 60 * 60 * 1000,
+  '1week': 7 * 24 * 60 * 60 * 1000,
+}
+
+function intervalKeyFromMtf(tfKey) {
+  const row = MTF_TIMEFRAMES.find((x) => x.key === tfKey)
+  return row ? row.binanceInterval : '15m'
+}
+
+function lastClosedHtfIndex(candles, intervalKey, targetTimeMs) {
+  const tfMs = INTERVAL_MS[intervalKey] ?? INTERVAL_MS['15m']
+  let j = -1
+  for (let i = 0; i < candles.length; i++) {
+    if (candles[i].date.getTime() + tfMs <= targetTimeMs) j = i
+    else break
+  }
+  return j
+}
+
+async function fetchBacktestMtfCandles(item) {
+  const out = { m15: [], h4: [], d1: [] }
+  if (item.binanceSymbol) {
+    const [m15, h4, d1] = await Promise.all([
+      fetchBinanceKlines(item.binanceSymbol, '15m', BACKTEST_FETCH_LIMIT),
+      fetchBinanceKlines(item.binanceSymbol, '4h', BACKTEST_FETCH_LIMIT),
+      fetchBinanceKlines(item.binanceSymbol, '1d', BACKTEST_FETCH_LIMIT),
+    ])
+    out.m15 = m15
+    out.h4 = h4
+    out.d1 = d1
+    return out
+  }
+  if (item.twelveSymbol && TWELVE_DATA_KEY) {
+    const [m15, h4, d1] = await Promise.all([
+      fetchTwelveDataCandles(item.twelveSymbol, '15min', BACKTEST_FETCH_LIMIT, TWELVE_DATA_KEY),
+      fetchTwelveDataCandles(item.twelveSymbol, '4h', BACKTEST_FETCH_LIMIT, TWELVE_DATA_KEY),
+      fetchTwelveDataCandles(item.twelveSymbol, '1day', BACKTEST_FETCH_LIMIT, TWELVE_DATA_KEY),
+    ])
+    out.m15 = m15
+    out.h4 = h4
+    out.d1 = d1
+    return out
+  }
+  throw new Error('Données indisponibles pour cet actif')
+}
+
+function simulateExitFromBar(direction, entry, sl, tp, candles, fromIdx) {
+  for (let k = fromIdx; k < candles.length; k++) {
+    const bar = candles[k]
+    if (direction === 'LONG') {
+      const hitSl = bar.low <= sl
+      const hitTp = bar.high >= tp
+      if (hitSl && hitTp) {
+        const pnlPct = ((sl - entry) / entry) * 100
+        return {
+          exitIdx: k,
+          exitPrice: sl,
+          reason: 'SL',
+          pnlPct,
+          exitTime: bar.date,
+        }
+      }
+      if (hitSl) {
+        return {
+          exitIdx: k,
+          exitPrice: sl,
+          reason: 'SL',
+          pnlPct: ((sl - entry) / entry) * 100,
+          exitTime: bar.date,
+        }
+      }
+      if (hitTp) {
+        return {
+          exitIdx: k,
+          exitPrice: tp,
+          reason: 'TP',
+          pnlPct: ((tp - entry) / entry) * 100,
+          exitTime: bar.date,
+        }
+      }
+    } else {
+      const hitSl = bar.high >= sl
+      const hitTp = bar.low <= tp
+      if (hitSl && hitTp) {
+        return {
+          exitIdx: k,
+          exitPrice: sl,
+          reason: 'SL',
+          pnlPct: ((entry - sl) / entry) * 100,
+          exitTime: bar.date,
+        }
+      }
+      if (hitSl) {
+        return {
+          exitIdx: k,
+          exitPrice: sl,
+          reason: 'SL',
+          pnlPct: ((entry - sl) / entry) * 100,
+          exitTime: bar.date,
+        }
+      }
+      if (hitTp) {
+        return {
+          exitIdx: k,
+          exitPrice: tp,
+          reason: 'TP',
+          pnlPct: ((entry - tp) / entry) * 100,
+          exitTime: bar.date,
+        }
+      }
+    }
+  }
+  const last = candles[candles.length - 1]
+  const close = last.close
+  const pnlPct =
+    direction === 'LONG' ? ((close - entry) / entry) * 100 : ((entry - close) / entry) * 100
+  return {
+    exitIdx: candles.length - 1,
+    exitPrice: close,
+    reason: 'FIN_SERIE',
+    pnlPct,
+    exitTime: last.date,
+  }
+}
+
+function runBacktestOnCandles(m15, h4, d1) {
+  const minWarmup = 80
+  if (m15.length < minWarmup + BACKTEST_BARS) {
+    throw new Error(`Pas assez de bougies 15m (reçu ${m15.length}, besoin ~${minWarmup + BACKTEST_BARS})`)
+  }
+
+  const h4Key = intervalKeyFromMtf('4H')
+  const d1Key = intervalKeyFromMtf('1D')
+  const m15Ms = INTERVAL_MS['15m']
+
+  const startIdx = m15.length - BACKTEST_BARS
+  const endIdx = m15.length - 1
+  const periodStart = m15[startIdx].date
+  const periodEnd = m15[endIdx].date
+
+  const trades = []
+  let openUntil = -1
+
+  for (let i = startIdx; i <= endIdx; i++) {
+    if (i < minWarmup) continue
+    if (i <= openUntil) continue
+
+    const tClose = m15[i].date.getTime() + m15Ms
+    const j4 = lastClosedHtfIndex(h4, h4Key, tClose)
+    const jd = lastClosedHtfIndex(d1, d1Key, tClose)
+    if (j4 < 0 || jd < 0) continue
+
+    const slice15 = m15.slice(0, i + 1)
+    const c15 = computeIndicatorsAndTrade(slice15)
+    const c4 = computeIndicatorsAndTrade(h4.slice(0, j4 + 1))
+    const cd = computeIndicatorsAndTrade(d1.slice(0, jd + 1))
+    if (!c15 || !c4 || !cd) continue
+
+    const mtfMap = { '15m': c15, '4H': c4, '1D': cd }
+    const conf = buildConfluenceResult(mtfMap)
+    if (!conf) continue
+
+    const score = conf.score
+    let direction = null
+    if (score > 75) direction = 'LONG'
+    else if (score < 25) direction = 'SHORT'
+    else continue
+
+    const entry = m15[i].close
+    const { stopLoss: sl, takeProfit: tp } = c15.trade
+    if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(sl) || !Number.isFinite(tp)) continue
+
+    if (direction === 'LONG' && !(sl < entry && tp > entry)) continue
+    if (direction === 'SHORT' && !(sl > entry && tp < entry)) continue
+
+    const exitFrom = i + 1
+    if (exitFrom >= m15.length) break
+
+    const sim = simulateExitFromBar(direction, entry, sl, tp, m15, exitFrom)
+    openUntil = sim.exitIdx
+
+    trades.push({
+      signalIndex: i,
+      exitIdx: sim.exitIdx,
+      entryTime: m15[i].date,
+      direction,
+      score,
+      entry,
+      sl,
+      tp,
+      exitTime: sim.exitTime,
+      exitPrice: sim.exitPrice,
+      exitReason: sim.reason,
+      pnlPct: sim.pnlPct,
+    })
+  }
+
+  trades.sort((a, b) => a.exitIdx - b.exitIdx)
+
+  let eFinal = 100
+  for (const tr of trades) eFinal *= 1 + tr.pnlPct / 100
+
+  const curve = []
+  let e = 100
+  let ti = 0
+  for (let u = 0; u < BACKTEST_BARS; u++) {
+    const barIdx = startIdx + u
+    while (ti < trades.length && trades[ti].exitIdx <= barIdx) {
+      e *= 1 + trades[ti].pnlPct / 100
+      ti++
+    }
+    curve.push({ t: m15[startIdx + u].date, equity: e })
+  }
+
+  const winners = trades.filter((x) => x.pnlPct > 0)
+  const losers = trades.filter((x) => x.pnlPct <= 0)
+  const total = trades.length
+  const winCount = winners.length
+  const lossCount = losers.length
+  const winRatePct = total > 0 ? (winCount / total) * 100 : 0
+  const avgWin =
+    winCount > 0 ? winners.reduce((s, x) => s + x.pnlPct, 0) / winCount : 0
+  const avgLoss =
+    lossCount > 0 ? losers.reduce((s, x) => s + x.pnlPct, 0) / lossCount : 0
+  const sumWin = winners.reduce((s, x) => s + x.pnlPct, 0)
+  const sumLossAbs = losers.reduce((s, x) => s + Math.abs(x.pnlPct), 0)
+  const profitFactor = sumLossAbs > 0 ? sumWin / sumLossAbs : sumWin > 0 ? Infinity : 0
+  const totalGainPct = eFinal - 100
+
+  return {
+    periodStart,
+    periodEnd,
+    trades,
+    stats: {
+      total,
+      winCount,
+      lossCount,
+      winRatePct,
+      avgWin,
+      avgLoss,
+      profitFactor,
+      totalGainPct,
+    },
+    equityCurve: curve,
+  }
+}
+
+function tradesToCsv(trades) {
+  const headers = [
+    'date_entree',
+    'direction',
+    'score',
+    'entree',
+    'stop_loss',
+    'take_profit',
+    'date_sortie',
+    'prix_sortie',
+    'raison',
+    'pnl_pct',
+  ]
+  const rows = trades.map((tr) =>
+    [
+      tr.entryTime.toISOString(),
+      tr.direction,
+      tr.score,
+      tr.entry,
+      tr.sl,
+      tr.tp,
+      tr.exitTime.toISOString(),
+      tr.exitPrice,
+      tr.exitReason,
+      tr.pnlPct.toFixed(4),
+    ].join(','),
+  )
+  return [headers.join(','), ...rows].join('\n')
+}
+
+function EquityCurveChart({ points }) {
+  const w = 560
+  const h = 140
+  if (!Array.isArray(points) || points.length < 2) return null
+  const vals = points.map((p) => p.equity)
+  const min = Math.min(...vals, 99)
+  const max = Math.max(...vals, 101)
+  const span = max - min || 1
+  const linePts = points
+    .map((p, i) => {
+      const x = (i / (points.length - 1)) * w
+      const y = h - 6 - ((p.equity - min) / span) * (h - 12)
+      return `${x.toFixed(2)},${y.toFixed(2)}`
+    })
+    .join(' ')
+  const firstX = 0
+  const lastX = w
+  const lastY = h - 6 - ((vals[vals.length - 1] - min) / span) * (h - 12)
+  const areaPts = `${linePts} ${lastX},${h} ${firstX},${h}`
+  return (
+    <svg
+      className="equity-curve-chart"
+      width="100%"
+      height={h}
+      viewBox={`0 0 ${w} ${h}`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient id="equityGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stopColor="rgba(0,229,160,0.35)" />
+          <stop offset="100%" stopColor="rgba(0,229,160,0)" />
+        </linearGradient>
+      </defs>
+      <polygon points={areaPts} fill="url(#equityGrad)" />
+      <polyline
+        points={linePts}
+        fill="none"
+        stroke="#00e5a0"
+        strokeWidth="2"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
+function BacktestPanel({ open, onClose, item, loading, error, data, onExportCsv }) {
+  useEffect(() => {
+    if (!open) return
+    const h = (e) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [open, onClose])
+
+  if (!open) return null
+
+  const fmtPct = (x) => `${x >= 0 ? '+' : ''}${Number(x).toFixed(2)}%`
+  const fmtDate = (d) =>
+    d instanceof Date && !Number.isNaN(d.getTime())
+      ? d.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })
+      : '—'
+
+  const s = data?.stats
+  const total = s?.total ?? 0
+  const winPct = total > 0 ? ((s.winCount / total) * 100).toFixed(1) : '0.0'
+  const lossPct = total > 0 ? ((s.lossCount / total) * 100).toFixed(1) : '0.0'
+  const pf =
+    s?.profitFactor === Infinity || s?.profitFactor === Number.POSITIVE_INFINITY
+      ? '∞'
+      : Number.isFinite(s?.profitFactor)
+        ? s.profitFactor.toFixed(2)
+        : '—'
+
+  return (
+    <div
+      className="backtest-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="backtest-title"
+      onClick={onClose}
+    >
+      <div className="backtest-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="backtest-modal-head">
+          <h2 id="backtest-title" className="backtest-title syne">
+            📊 Backtest {item.label} - {BACKTEST_BARS} bougies 15m
+          </h2>
+          <button type="button" className="backtest-close" onClick={onClose} aria-label="Fermer">
+            ✕
+          </button>
+        </div>
+
+        <div className="backtest-modal-body">
+          {loading && <div className="backtest-loading">Calcul en cours…</div>}
+          {error && <div className="backtest-error">{error}</div>}
+
+          {!loading && !error && data && (
+            <>
+              <div className="backtest-block mono">
+                <div>
+                  ⏱ Période : du {fmtDate(data.periodStart)} au {fmtDate(data.periodEnd)}
+                </div>
+                <div className="backtest-sep">─────────────────────────────</div>
+                <div>📈 Trades totaux : {total}</div>
+                <div>
+                  ✅ Gagnants : {s.winCount} ({winPct}%)
+                </div>
+                <div>
+                  ❌ Perdants : {s.lossCount} ({lossPct}%)
+                </div>
+                <div className="backtest-sep">─────────────────────────────</div>
+                <div>💰 Profit moyen : {fmtPct(s.avgWin)}</div>
+                <div>📉 Perte moyenne : {fmtPct(s.avgLoss)}</div>
+                <div>⚖️ Profit Factor : {pf}</div>
+                <div>📈 Win Rate : {s.winRatePct.toFixed(1)}%</div>
+                <div>💵 Gain total simulé : {fmtPct(s.totalGainPct)}</div>
+                <div className="backtest-sep">─────────────────────────────</div>
+                <div className="backtest-disclaimer">
+                  ⚠️ &quot;Résultats passés ne garantissent pas les résultats futurs&quot;
+                </div>
+              </div>
+
+              <div className="backtest-chart-wrap">
+                <div className="backtest-chart-label syne">Courbe d&apos;équité (capital de départ 100)</div>
+                <EquityCurveChart points={data.equityCurve} />
+              </div>
+
+              <div className="backtest-actions">
+                <button
+                  type="button"
+                  className="backtest-export-btn"
+                  onClick={onExportCsv}
+                  disabled={!data.trades?.length}
+                >
+                  📥 Exporter CSV
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function simulateComputedForItem(item, prevSim) {
   const profile =
     SIM_PROFILE_BY_CATEGORY[item.category] ?? SIM_PROFILE_BY_CATEGORY.Forex
@@ -2215,6 +2650,10 @@ export default function App() {
   const [testAlertLoading, setTestAlertLoading] = useState(false)
   const [testAlertStatus, setTestAlertStatus] = useState(null)
   const [testAlertResponse, setTestAlertResponse] = useState(null)
+  const [backtestOpen, setBacktestOpen] = useState(false)
+  const [backtestLoading, setBacktestLoading] = useState(false)
+  const [backtestError, setBacktestError] = useState(null)
+  const [backtestData, setBacktestData] = useState(null)
   const [telegramAlertsEnabled, setTelegramAlertsEnabled] = useState(() => {
     try {
       return localStorage.getItem(LS_TELEGRAM_ALERTS) === '1'
@@ -2610,6 +3049,46 @@ export default function App() {
     }
   }, [])
 
+  const handleBacktestExportCsv = useCallback(() => {
+    if (!backtestData?.trades?.length) return
+    const csv = tradesToCsv(backtestData.trades)
+    const blob = new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    const safe = selectedItem.label.replace(/[/\\?%*:|"<>]/g, '-')
+    a.download = `backtest-${safe}.csv`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }, [backtestData, selectedItem.label])
+
+  useEffect(() => {
+    if (!backtestOpen) return
+    let cancelled = false
+    ;(async () => {
+      setBacktestLoading(true)
+      setBacktestError(null)
+      setBacktestData(null)
+      try {
+        if (!selectedItem.binanceSymbol && !(selectedItem.twelveSymbol && TWELVE_DATA_KEY)) {
+          throw new Error(
+            'Backtest disponible pour les cryptos (Binance) ou avec une clé Twelve Data (forex / matières).',
+          )
+        }
+        const { m15, h4, d1 } = await fetchBacktestMtfCandles(selectedItem)
+        if (cancelled) return
+        const data = runBacktestOnCandles(m15, h4, d1)
+        if (!cancelled) setBacktestData(data)
+      } catch (e) {
+        if (!cancelled) setBacktestError(e instanceof Error ? e.message : 'Erreur')
+      } finally {
+        if (!cancelled) setBacktestLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [backtestOpen, selectedItem])
+
   useEffect(() => {
     scanNow()
     const id = window.setInterval(scanNow, POLL_MS)
@@ -2727,6 +3206,14 @@ export default function App() {
         </div>
 
         <div className="header-right">
+          <button
+            type="button"
+            className="backtest-header-btn"
+            onClick={() => setBacktestOpen(true)}
+            title="Backtest : 200 bougies 15m, score confluence comme le scanner"
+          >
+            📊 Backtest
+          </button>
           <div className="fear-greed-block" title="Crypto Fear & Greed (alternative.me)">
             <div className="fear-greed-pill mono">
               <span className="fear-greed-emoji">{fearGreedEmoji(fearGreed?.value)}</span>
@@ -2944,6 +3431,16 @@ export default function App() {
       <footer className="scanner-footer">
         {`Données : Binance (crypto) + Twelve Data (forex/matières). Scores multi-timeframe 1D/4H/15m. Chart : TradingView (${selectedTimeframe.tradingViewInterval}).`}
       </footer>
+
+      <BacktestPanel
+        open={backtestOpen}
+        onClose={() => setBacktestOpen(false)}
+        item={selectedItem}
+        loading={backtestLoading}
+        error={backtestError}
+        data={backtestData}
+        onExportCsv={handleBacktestExportCsv}
+      />
     </div>
   )
 }

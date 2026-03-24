@@ -1357,6 +1357,164 @@ body:has(.scanner-app) {
   background: rgba(13, 20, 32, 0.5);
 }
 
+.backtest-header-btn {
+  padding: 8px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(99, 102, 241, 0.45);
+  background: rgba(99, 102, 241, 0.12);
+  color: rgba(229, 231, 235, 0.95);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  transition: border-color 0.2s ease, background 0.2s ease;
+  white-space: nowrap;
+}
+
+.backtest-header-btn:hover {
+  border-color: rgba(129, 140, 248, 0.65);
+  background: rgba(99, 102, 241, 0.2);
+}
+
+.backtest-overlay {
+  position: fixed;
+  z-index: 200;
+  inset: 0;
+  background: rgba(8, 12, 18, 0.88);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.backtest-modal {
+  width: min(520px, 100%);
+  max-height: min(90vh, 720px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  border: 1px solid var(--sc-border);
+  background: rgba(17, 26, 40, 0.98);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+}
+
+.backtest-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--sc-border);
+}
+
+.backtest-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 800;
+  color: #fff;
+  line-height: 1.25;
+}
+
+.backtest-close {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid var(--sc-border);
+  background: rgba(30, 45, 69, 0.5);
+  color: rgba(229, 231, 235, 0.9);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.backtest-close:hover {
+  background: rgba(255, 61, 90, 0.15);
+  border-color: rgba(255, 61, 90, 0.35);
+}
+
+.backtest-modal-body {
+  padding: 16px 18px 20px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.backtest-loading,
+.backtest-error {
+  font-size: 14px;
+  padding: 12px 0;
+}
+
+.backtest-error {
+  color: #ff8a9a;
+}
+
+.backtest-block {
+  font-size: 13px;
+  line-height: 1.65;
+  color: rgba(229, 231, 235, 0.92);
+}
+
+.backtest-sep {
+  color: rgba(148, 163, 184, 0.55);
+  user-select: none;
+}
+
+.backtest-disclaimer {
+  font-size: 12px;
+  color: rgba(251, 191, 36, 0.85);
+  line-height: 1.45;
+}
+
+.backtest-chart-wrap {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px dashed rgba(148, 163, 184, 0.22);
+}
+
+.backtest-chart-label {
+  font-size: 12px;
+  color: var(--sc-muted);
+  margin-bottom: 8px;
+}
+
+.equity-curve-chart {
+  display: block;
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--sc-border);
+  background: rgba(13, 20, 32, 0.6);
+}
+
+.backtest-actions {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.backtest-export-btn {
+  padding: 10px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 229, 160, 0.4);
+  background: rgba(0, 229, 160, 0.1);
+  color: rgba(229, 231, 235, 0.95);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+.backtest-export-btn:hover:not(:disabled) {
+  background: rgba(0, 229, 160, 0.18);
+}
+
+.backtest-export-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 @media (max-width: 900px) {
   .scanner-grid {
     grid-template-columns: 1fr;
