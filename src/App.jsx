@@ -165,6 +165,7 @@ function WatchlistPanel({
   onPickSymbol,
   scoreHistory,
   scorePulse,
+  macroContext,
 }) {
   return (
     <>
@@ -187,10 +188,10 @@ function WatchlistPanel({
         {visibleItems.map((item) => {
           const isActive = item.tvSymbol === selectedTvSymbol
           const result = scanResults[item.tvSymbol]
-          const score =
-            result && typeof result.confluence?.score === 'number'
-              ? result.confluence.score
-              : null
+          const adj = result?.confluence
+            ? applyMacroToConfluence(result.confluence, macroContext)
+            : null
+          const score = typeof adj?.score === 'number' ? adj.score : null
           const mtfScores = result?.confluence?.mtfScores
 
           const badgeClass = score == null ? 'badge--neutral' : scoreToBadgeClass(score)
@@ -235,6 +236,115 @@ function WatchlistPanel({
 
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n))
+}
+
+/** Ajuste le score confluence selon Fear & Greed (crypto) */
+function applyMacroToConfluence(confluence, macro) {
+  if (!confluence) return null
+  const fg = macro?.fearGreedValue
+  let score = confluence.score
+  if (fg != null && Number.isFinite(fg) && fg < 25) score = clamp(score - 5, 0, 100)
+  if (fg != null && Number.isFinite(fg) && fg > 75) score = clamp(score + 5, 0, 100)
+  return {
+    ...confluence,
+    score,
+    macroWarning: macro?.macroImminent === true,
+    fearGreedAdj: fg != null && fg < 25 ? 'SHORT' : fg != null && fg > 75 ? 'LONG' : null,
+  }
+}
+
+function fearGreedLabel(value) {
+  if (value == null || !Number.isFinite(value)) return '—'
+  if (value <= 24) return 'Extreme Fear'
+  if (value <= 44) return 'Fear'
+  if (value <= 55) return 'Neutral'
+  if (value <= 75) return 'Greed'
+  return 'Extreme Greed'
+}
+
+function fearGreedEmoji(value) {
+  if (value == null || !Number.isFinite(value)) return '⚪'
+  if (value <= 24) return '🔴'
+  if (value <= 44) return '🟡'
+  if (value <= 55) return '⚪'
+  if (value <= 75) return '🟢'
+  return '🔵'
+}
+
+function parseCalendarEventTime(e) {
+  if (!e?.date) return null
+  const time = e.time && String(e.time).trim() ? String(e.time).trim() : '12:00:00'
+  const iso = `${e.date}T${time.length <= 5 ? `${time}:00` : time}`
+  const t = Date.parse(iso.endsWith('Z') ? iso : `${iso}Z`)
+  return Number.isFinite(t) ? t : null
+}
+
+function hasHighImpactMacroWithin2h(events) {
+  if (!Array.isArray(events)) return false
+  const now = Date.now()
+  const windowMs = 2 * 60 * 60 * 1000
+  for (const e of events) {
+    if (e.impact !== 'high') continue
+    const t = parseCalendarEventTime(e)
+    if (t == null) continue
+    if (t >= now && t <= now + windowMs) return true
+  }
+  return false
+}
+
+function impactBadge(impact) {
+  if (impact === 'high') return '🔴 High'
+  if (impact === 'medium') return '🟡 Medium'
+  return '🟢 Low'
+}
+
+function NewsPanel({ articles, calendarEvents, newsError, calendarError }) {
+  return (
+    <div className="news-panel">
+      <div className="news-panel-title">Actualites & calendrier</div>
+      <p className="panel-help news-hint">
+        Bonus score : FG &lt; 25 → SHORT | FG &gt; 75 → LONG. Fear & Greed affiche dans le header.
+      </p>
+
+      <div className="news-subtitle">Calendrier (NFP, CPI, FOMC, PIB…)</div>
+      {calendarError && <div className="news-error">{calendarError}</div>}
+      {!calendarEvents?.length && !calendarError && (
+        <div className="news-empty">Aucun evenement (ajoutez FINNHUB_API_KEY pour le flux reel)</div>
+      )}
+      <ul className="news-list news-calendar">
+        {(calendarEvents || []).slice(0, 6).map((e, i) => (
+          <li key={`${e.date}-${e.title}-${i}`} className="news-item">
+            <div className="news-item-title">{e.title}</div>
+            <div className="news-item-meta">
+              {e.displayTime || e.date} · {impactBadge(e.impact)}
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      <div className="news-subtitle">Dernieres news</div>
+      {newsError && <div className="news-error">{newsError}</div>}
+      {!articles?.length && !newsError && (
+        <div className="news-empty">Aucune news (ajoutez NEWS_API_KEY NewsAPI.org)</div>
+      )}
+      <ul className="news-list">
+        {(articles || []).slice(0, 5).map((a, i) => (
+          <li key={`${a.publishedAt}-${i}`} className="news-item">
+            {a.url ? (
+              <a href={a.url} target="_blank" rel="noopener noreferrer" className="news-item-link">
+                {a.title}
+              </a>
+            ) : (
+              <span className="news-item-title">{a.title}</span>
+            )}
+            <div className="news-item-meta">
+              {a.source} · {a.publishedAt ? new Date(a.publishedAt).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—'} · {impactBadge(a.impact)}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
 }
 
 function formatClock(d) {
@@ -1111,7 +1221,16 @@ function TradingViewAdvancedChart({ symbol, tvInterval }) {
   )
 }
 
-function SignalIdealPanel({ item, result, contextIndicators, contextTfLabel, contextLoading, selectedTimeframe }) {
+function SignalIdealPanel({
+  item,
+  result,
+  contextIndicators,
+  contextTfLabel,
+  contextLoading,
+  selectedTimeframe,
+  fearGreed,
+  macroContext,
+}) {
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState('')
   const [aiText, setAiText] = useState('')
@@ -1166,9 +1285,18 @@ function SignalIdealPanel({ item, result, contextIndicators, contextTfLabel, con
   const callClaudeAnalysis = async () => {
     setAiError('')
 
+    const fgLine =
+      fearGreed?.value != null
+        ? `Fear & Greed crypto=${Math.round(fearGreed.value)} (${fearGreedLabel(fearGreed.value)})`
+        : 'Fear & Greed crypto=NA'
+    const macroLine = macroContext?.macroImminent
+      ? 'ATTENTION: evenement macro majeur possible dans les 2 prochaines heures.'
+      : 'Pas d\'alerte calendrier macro imminente.'
     const prompt = `Tu es un expert en trading. Analyse ces données techniques et donne un avis concis en français :
 actif=${item.label}
 scores timeframes: 1D=${conf.mtfScores['1D']} | 4H=${conf.mtfScores['4H']} | 15m=${conf.mtfScores['15m']}
+${fgLine}
+${macroLine}
 indicateurs: RSI=${Number.isFinite(indicators.rsi) ? indicators.rsi.toFixed(2) : 'NA'}, MACD.hist=${Number.isFinite(indicators?.macd?.hist) ? indicators.macd.hist.toFixed(5) : 'NA'}, Stoch RSI=${Number.isFinite(indicators.stochRsi?.k) ? indicators.stochRsi.k.toFixed(1) : 'NA'}, Williams %R=${Number.isFinite(indicators.williamsR) ? indicators.williamsR.toFixed(1) : 'NA'}, Ichimoku=${indicators.ichimoku?.aboveCloud ? 'au-dessus nuage' : 'sous nuage'}${indicators.candlestickPattern?.name ? `, Pattern chandelier=${indicators.candlestickPattern.name} (${indicators.candlestickPattern.bullish ? 'haussiere' : 'baissiere'})` : ''}
 direction recommandee=${conf.recommendation}
 checklist validee=${conf.checksPassed}/${conf.checksTotal}
@@ -1219,6 +1347,17 @@ Maximum 5 lignes.`
       </div>
 
       <div className="panel-help">{conf.label}</div>
+
+      {conf.macroWarning && (
+        <div className="macro-warning-banner" role="alert">
+          Evenement macro imminent — attention au trade
+        </div>
+      )}
+      {conf.fearGreedAdj && (
+        <div className="macro-fg-hint">
+          Ajustement score (Fear & Greed) : bonus {conf.fearGreedAdj === 'LONG' ? 'LONG' : 'SHORT'}
+        </div>
+      )}
 
       <div className="trade-row">
         <div className="trade-k">Direction recommandee</div>
@@ -1434,6 +1573,79 @@ export default function App() {
   const lastScoreRef = useRef({})
   const scanningRef = useRef(false)
   const simStateRef = useRef({})
+  const macroRef = useRef({ fearGreedValue: null, macroImminent: false })
+
+  const [fearGreed, setFearGreed] = useState(null)
+  const [newsArticles, setNewsArticles] = useState([])
+  const [calendarEvents, setCalendarEvents] = useState([])
+  const [newsError, setNewsError] = useState(null)
+  const [calendarError, setCalendarError] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadFng() {
+      try {
+        const r = await fetch('https://api.alternative.me/fng/?limit=1')
+        const json = await r.json()
+        const row = json?.data?.[0]
+        if (!cancelled && row) {
+          setFearGreed({
+            value: Number(row.value),
+            label: row.value_classification || fearGreedLabel(Number(row.value)),
+          })
+        }
+      } catch {
+        if (!cancelled) setFearGreed(null)
+      }
+    }
+    loadFng()
+    const id = window.setInterval(loadFng, 5 * 60 * 1000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadNewsCal() {
+      try {
+        const [newsRes, calRes] = await Promise.all([fetch('/api/news'), fetch('/api/calendar')])
+        const newsJson = await newsRes.json().catch(() => ({}))
+        const calJson = await calRes.json().catch(() => ({}))
+        if (cancelled) return
+        setNewsError(newsJson.ok === false && newsJson.error ? newsJson.error : null)
+        setCalendarError(calJson.ok === false && calJson.error ? calJson.error : null)
+        if (newsJson.ok && Array.isArray(newsJson.articles)) setNewsArticles(newsJson.articles)
+        else if (!newsJson.ok) setNewsArticles([])
+        if (calJson.ok && Array.isArray(calJson.events)) setCalendarEvents(calJson.events)
+        else if (!calJson.ok) setCalendarEvents([])
+      } catch {
+        if (!cancelled) {
+          setNewsError('Erreur reseau')
+          setCalendarError('Erreur reseau')
+        }
+      }
+    }
+    loadNewsCal()
+    const id = window.setInterval(loadNewsCal, 5 * 60 * 1000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [])
+
+  const macroContext = useMemo(
+    () => ({
+      fearGreedValue: fearGreed?.value,
+      macroImminent: hasHighImpactMacroWithin2h(calendarEvents),
+    }),
+    [fearGreed, calendarEvents],
+  )
+
+  useEffect(() => {
+    macroRef.current = macroContext
+  }, [macroContext])
 
   useEffect(() => {
     telegramAlertsEnabledRef.current = telegramAlertsEnabled
@@ -1459,7 +1671,9 @@ export default function App() {
   const evaluateTelegramAlerts = useCallback(async (scanResultsMap) => {
     if (!telegramAlertsEnabledRef.current) return
     for (const item of WATCHLIST) {
-      const conf = scanResultsMap[item.tvSymbol]?.confluence
+      const raw = scanResultsMap[item.tvSymbol]?.confluence
+      if (!raw) continue
+      const conf = applyMacroToConfluence(raw, macroRef.current)
       if (!conf) continue
       if (typeof conf.score !== 'number' || conf.score <= 75) continue
       if (countMtfScoresAbove75(conf.mtfScores) < 2) continue
@@ -1487,11 +1701,13 @@ export default function App() {
   const visibleItems = useMemo(() => {
     if (filter !== STRONG_SIGNAL_FILTER) return categoryItems
     return WATCHLIST.filter((item) => {
-      const conf = scanResults[item.tvSymbol]?.confluence
+      const raw = scanResults[item.tvSymbol]?.confluence
+      if (!raw) return false
+      const conf = applyMacroToConfluence(raw, macroContext)
       if (!conf) return false
       return conf.score > 75 && conf.trade.rr > 2 && conf.alignedCount >= 2
     })
-  }, [filter, categoryItems, scanResults])
+  }, [filter, categoryItems, scanResults, macroContext])
 
   // Keep selected symbol valid when switching filters.
   useEffect(() => {
@@ -1534,7 +1750,7 @@ export default function App() {
         simStateRef.current[item.tvSymbol] = nextGroup
         simUpdates[item.tvSymbol] = { confluence, mtfData: mtfMap }
 
-        const nextScore = confluence?.score
+        const nextScore = applyMacroToConfluence(confluence, macroRef.current)?.score
         if (typeof nextScore === 'number') {
           simHistoryScores[item.tvSymbol] = nextScore
           const prevScore = lastScoreRef.current[item.tvSymbol]
@@ -1616,7 +1832,7 @@ export default function App() {
         const { tvSymbol, confluence, mtfData } = s.value
         finalUpdates[tvSymbol] = { confluence, mtfData }
 
-        const nextScore = confluence?.score
+        const nextScore = applyMacroToConfluence(confluence, macroRef.current)?.score
         if (typeof nextScore === 'number') {
           finalHistoryScores[tvSymbol] = nextScore
           const prevScore = lastScoreRef.current[tvSymbol]
@@ -1707,7 +1923,13 @@ export default function App() {
   }, [selectedTimeframe])
 
   const selectedResult = scanResults[selectedTvSymbol]
-  const selectedComputed = selectedResult && selectedResult.confluence ? selectedResult : null
+  const selectedComputed = useMemo(() => {
+    if (!selectedResult?.confluence) return null
+    return {
+      ...selectedResult,
+      confluence: applyMacroToConfluence(selectedResult.confluence, macroContext),
+    }
+  }, [selectedResult, macroContext])
 
   const [contextIndicators, setContextIndicators] = useState(null)
   const [contextTfLabel, setContextTfLabel] = useState(selectedTimeframe.label ?? '15m')
@@ -1796,6 +2018,14 @@ export default function App() {
         </div>
 
         <div className="header-right">
+          <div
+            className="fear-greed-pill mono"
+            title="Crypto Fear & Greed (alternative.me)"
+          >
+            {fearGreedEmoji(fearGreed?.value)} F&G{' '}
+            {fearGreed?.value != null ? `${Math.round(fearGreed.value)}` : '—'}{' '}
+            <span className="fear-greed-label">{fearGreedLabel(fearGreed?.value)}</span>
+          </div>
           <button
             type="button"
             className={`telegram-toggle ${telegramAlertsEnabled ? 'is-on' : ''}`}
@@ -1881,6 +2111,13 @@ export default function App() {
             onPickSymbol={onPickSymbol}
             scoreHistory={scoreHistory}
             scorePulse={scorePulse}
+            macroContext={macroContext}
+          />
+          <NewsPanel
+            articles={newsArticles}
+            calendarEvents={calendarEvents}
+            newsError={newsError}
+            calendarError={calendarError}
           />
         </aside>
 
@@ -1914,6 +2151,7 @@ export default function App() {
                 onPickSymbol={onPickSymbol}
                 scoreHistory={scoreHistory}
                 scorePulse={scorePulse}
+                macroContext={macroContext}
               />
             </div>
           </div>
@@ -1975,6 +2213,8 @@ export default function App() {
             contextTfLabel={contextTfLabel}
             contextLoading={contextLoading}
             selectedTimeframe={selectedTimeframe}
+            fearGreed={fearGreed}
+            macroContext={macroContext}
           />
         </aside>
       </main>

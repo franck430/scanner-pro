@@ -286,6 +286,116 @@ body:has(.scanner-app) {
   cursor: not-allowed;
 }
 
+.fear-greed-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(2, 6, 23, 0.35);
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(229, 231, 235, 0.95);
+  max-width: min(280px, 42vw);
+  flex-wrap: wrap;
+}
+
+.fear-greed-label {
+  font-weight: 600;
+  color: rgba(229, 231, 235, 0.75);
+  font-size: 11px;
+}
+
+.news-panel {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.15);
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.news-panel-title {
+  font-size: 14px;
+  font-weight: 800;
+  margin-bottom: 8px;
+  color: rgba(229, 231, 235, 0.95);
+}
+
+.news-subtitle {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(0, 229, 160, 0.75);
+  margin-top: 10px;
+  margin-bottom: 4px;
+}
+
+.news-hint {
+  font-size: 11px !important;
+  margin-bottom: 8px !important;
+}
+
+.news-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.news-item {
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+  font-size: 12px;
+}
+
+.news-item-title,
+.news-item-link {
+  font-weight: 600;
+  color: rgba(229, 231, 235, 0.92);
+  text-decoration: none;
+  display: block;
+}
+
+.news-item-link:hover {
+  color: rgba(0, 229, 160, 0.95);
+  text-decoration: underline;
+}
+
+.news-item-meta {
+  margin-top: 4px;
+  font-size: 10px;
+  color: rgba(148, 163, 184, 0.9);
+}
+
+.news-empty,
+.news-error {
+  font-size: 11px;
+  color: rgba(229, 231, 235, 0.55);
+  padding: 6px 0;
+}
+
+.news-error {
+  color: rgba(255, 176, 32, 0.95);
+}
+
+.macro-warning-banner {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 176, 32, 0.15);
+  border: 1px solid rgba(255, 176, 32, 0.45);
+  color: rgba(255, 220, 160, 0.98);
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.macro-fg-hint {
+  font-size: 11px;
+  color: rgba(0, 229, 160, 0.85);
+  margin-bottom: 6px;
+}
+
 .hamburger-btn {
   display: none;
   width: 42px;
