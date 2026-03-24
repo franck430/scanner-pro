@@ -315,8 +315,6 @@ function WatchlistPanel({
   macroContext,
   favoriteSymbols,
   onToggleFavorite,
-  forexSessionFilter,
-  onToggleForexSessionFilter,
 }) {
   const favoriteSet = useMemo(() => new Set(favoriteSymbols), [favoriteSymbols])
 
@@ -431,14 +429,6 @@ function WatchlistPanel({
             {f}
           </button>
         ))}
-        <button
-          type="button"
-          className={`filter-btn filter-btn--session ${forexSessionFilter ? 'is-active' : ''}`}
-          onClick={onToggleForexSessionFilter}
-          title="Prioriser les paires Forex selon la session UTC (Tokyo→JPY, Londres→EUR/GBP, NY→USD)"
-        >
-          🕐 Filtrer par session
-        </button>
       </div>
 
       <div className="watchlist">
@@ -582,50 +572,91 @@ function utcMinuteTotal(d) {
   return d.getUTCHours() * 60 + d.getUTCMinutes()
 }
 
-/** Tri watchlist Forex : priorité selon session UTC (Tokyo→JPY, Londres→EUR/GBP/AUD/NZD, NY→USD, 13–17 UTC chevauchement). */
-function forexSessionSortRank(label, utcMin) {
-  const hasJPY = label.includes('JPY')
-  const isUsdPair =
-    label.endsWith('/USD') ||
-    label.startsWith('USD/') ||
-    (label.includes('USD') && !hasJPY)
-  const isLondonPriority =
-    label.includes('EUR') ||
-    label.includes('GBP') ||
-    label.includes('AUD') ||
-    label.includes('NZD')
-
-  if (utcMin >= 780 && utcMin < 1020) return 0
-  if (utcMin >= 0 && utcMin < 540) return hasJPY ? 0 : 2
-  if (utcMin >= 540 && utcMin < 780) return isLondonPriority ? 0 : 2
-  if (utcMin >= 1020 && utcMin < 1320) return isUsdPair ? 0 : 2
-  return hasJPY ? 0 : 2
+/** Priorité watchlist Forex quand une session est choisie dans le header (cryptos / matières inchangés en tête de tri). */
+const FOREX_SESSION_PRIORITY = {
+  tokyo: ['USD/JPY', 'EUR/JPY', 'GBP/JPY'],
+  london: ['EUR/USD', 'GBP/USD', 'EUR/GBP', 'GBP/JPY'],
+  newyork: ['USD/CAD', 'USD/CHF', 'NZD/USD', 'AUD/USD'],
+  overlap: [
+    'EUR/USD',
+    'GBP/USD',
+    'USD/JPY',
+    'EUR/GBP',
+    'USD/CHF',
+    'USD/CAD',
+    'AUD/USD',
+    'NZD/USD',
+    'EUR/JPY',
+    'GBP/JPY',
+  ],
 }
 
-function ForexSessionsBar({ now }) {
+function forexManualWatchlistRank(item, mode) {
+  if (item.category !== 'Forex' || !mode) return 0
+  const order = FOREX_SESSION_PRIORITY[mode]
+  if (!order) return 50
+  const i = order.indexOf(item.label)
+  if (i >= 0) return 1 + i
+  return 100
+}
+
+function ForexSessionsBar({ now, selectedSession, onSessionClick }) {
   const t = utcMinuteTotal(now)
   const tok = t >= 0 && t < 540
   const lon = t >= 480 && t < 1020
   const ny = t >= 780 && t < 1320
   const ov = t >= 780 && t < 1020
-  return (
-    <div className="forex-sessions-bar" role="status" aria-label="Sessions Forex UTC">
-      <span className="forex-sessions-utc mono">UTC {now.toISOString().slice(11, 16)}</span>
-      <span className={`forex-session-pill ${tok ? 'is-active' : 'is-inactive'}`} title="Tokyo 00:00–09:00 UTC">
-        🌏 Tokyo 00–09h
-      </span>
-      <span className={`forex-session-pill ${lon ? 'is-active' : 'is-inactive'}`} title="Londres 08:00–17:00 UTC">
-        🌍 Londres 08–17h
-      </span>
-      <span className={`forex-session-pill ${ny ? 'is-active' : 'is-inactive'}`} title="New York 13:00–22:00 UTC">
-        🌎 New York 13–22h
-      </span>
-      <span
-        className={`forex-session-pill forex-session-pill--overlap ${ov ? 'is-active' : 'is-inactive'}`}
-        title="Chevauchement Londres / NY — meilleure liquidité"
+
+  const pill = (key, utcOn, label, title) => {
+    const isSel = selectedSession === key
+    return (
+      <button
+        key={key}
+        type="button"
+        className={`forex-session-pill ${utcOn ? 'is-active' : 'is-inactive'} ${isSel ? 'is-selected' : ''}`}
+        title={title}
+        onClick={() => onSessionClick(key)}
+        aria-pressed={isSel}
       >
-        ⭐ Londres/NY 13–17h
-      </span>
+        <span className="forex-session-pill-row">
+          <span className="forex-session-pill-label">{label}</span>
+          {utcOn ? (
+            <span className="forex-session-badge forex-session-badge--live">LIVE</span>
+          ) : (
+            <span className="forex-session-badge forex-session-badge--idle">—</span>
+          )}
+        </span>
+      </button>
+    )
+  }
+
+  return (
+    <div className="forex-sessions-bar" role="group" aria-label="Sessions Forex UTC — cliquer pour trier la watchlist">
+      <span className="forex-sessions-utc mono">UTC {now.toISOString().slice(11, 16)}</span>
+      {pill('tokyo', tok, '🌏 Tokyo 00–09h', 'Tokyo 00:00–09:00 UTC — clic : priorité JPY')}
+      {pill('london', lon, '🌍 Londres 08–17h', 'Londres 08:00–17:00 UTC — clic : priorité EUR/GBP')}
+      {pill('newyork', ny, '🌎 New York 13–22h', 'New York 13:00–22:00 UTC — clic : priorité USD')}
+      <button
+        type="button"
+        className={`forex-session-pill forex-session-pill--overlap ${ov ? 'is-active' : 'is-inactive'} ${selectedSession === 'overlap' ? 'is-selected' : ''}`}
+        title="Chevauchement Londres / NY 13:00–17:00 UTC — meilleure liquidité"
+        onClick={() => onSessionClick('overlap')}
+        aria-pressed={selectedSession === 'overlap'}
+      >
+        <span className="forex-session-pill-col">
+          <span className="forex-session-pill-row">
+            <span className="forex-session-pill-label">⭐ Londres/NY 13–17h</span>
+            {ov ? (
+              <span className="forex-session-badge forex-session-badge--prime">Prime Time</span>
+            ) : (
+              <span className="forex-session-badge forex-session-badge--idle">—</span>
+            )}
+          </span>
+          {ov && (
+            <span className="forex-session-prime-line">Meilleure liquidité</span>
+          )}
+        </span>
+      </button>
     </div>
   )
 }
@@ -2875,7 +2906,8 @@ Maximum 5 lignes.`
 
 export default function App() {
   const [filter, setFilter] = useState('Tous')
-  const [forexSessionFilter, setForexSessionFilter] = useState(false)
+  /** null | 'tokyo' | 'london' | 'newyork' | 'overlap' — tri Forex depuis le header */
+  const [forexSessionManualFilter, setForexSessionManualFilter] = useState(null)
   const [favoriteSymbols, setFavoriteSymbols] = useState(() => readFavoritesFromStorage())
 
   useEffect(() => {
@@ -3148,17 +3180,16 @@ export default function App() {
             if (!conf) return false
             return conf.score > 75 && conf.trade.rr > 2 && conf.alignedCount >= 2
           })
-    if (forexSessionFilter) {
-      const utcMin = utcMinuteTotal(now)
+    if (forexSessionManualFilter) {
       list = [...list].sort((a, b) => {
-        const ar = a.category === 'Forex' ? forexSessionSortRank(a.label, utcMin) : 100
-        const br = b.category === 'Forex' ? forexSessionSortRank(b.label, utcMin) : 100
+        const ar = forexManualWatchlistRank(a, forexSessionManualFilter)
+        const br = forexManualWatchlistRank(b, forexSessionManualFilter)
         if (ar !== br) return ar - br
         return a.label.localeCompare(b.label)
       })
     }
     return list
-  }, [filter, categoryItems, scanResults, macroContext, forexSessionFilter, now])
+  }, [filter, categoryItems, scanResults, macroContext, forexSessionManualFilter])
 
   // Keep selected symbol valid when switching filters.
   useEffect(() => {
@@ -3616,7 +3647,13 @@ export default function App() {
           </div>
         </div>
         </div>
-        <ForexSessionsBar now={now} />
+        <ForexSessionsBar
+          now={now}
+          selectedSession={forexSessionManualFilter}
+          onSessionClick={(key) => {
+            setForexSessionManualFilter((prev) => (prev === key ? null : key))
+          }}
+        />
       </header>
 
       <button
@@ -3643,8 +3680,6 @@ export default function App() {
             macroContext={macroContext}
             favoriteSymbols={favoriteSymbols}
             onToggleFavorite={toggleFavorite}
-            forexSessionFilter={forexSessionFilter}
-            onToggleForexSessionFilter={() => setForexSessionFilter((v) => !v)}
           />
           <NewsPanel
             articles={newsArticles}
@@ -3687,8 +3722,6 @@ export default function App() {
                 macroContext={macroContext}
                 favoriteSymbols={favoriteSymbols}
                 onToggleFavorite={toggleFavorite}
-                forexSessionFilter={forexSessionFilter}
-                onToggleForexSessionFilter={() => setForexSessionFilter((v) => !v)}
               />
             </div>
           </div>
