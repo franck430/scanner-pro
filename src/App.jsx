@@ -4,7 +4,11 @@ import './App.css'
 const POLL_MS = 30000
 const BINANCE_LIMIT = 100
 const TWELVE_DATA_LIMIT = 100
-const BACKTEST_BARS = 200
+const BACKTEST_BARS = 1000
+/** Bougies 15m avant la fenêtre (EMA50, indicateurs). */
+const BACKTEST_WARMUP_BARS = 80
+const BACKTEST_15M_REQUIRED = BACKTEST_WARMUP_BARS + BACKTEST_BARS
+const BINANCE_KLINE_MAX = 1000
 const BACKTEST_FETCH_LIMIT = 1000
 const SCORE_HISTORY_LEN = 24
 const TWELVE_DATA_KEY = import.meta.env.VITE_TWELVE_DATA_KEY
@@ -631,12 +635,37 @@ function formatClock(d) {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
-async function fetchBinanceKlines(binanceSymbol, interval, limit) {
+function mergeCandleArrays(a, b) {
+  const map = new Map()
+  for (const c of a) map.set(c.date.getTime(), c)
+  for (const c of b) map.set(c.date.getTime(), c)
+  return Array.from(map.values()).sort((x, y) => x.date.getTime() - y.date.getTime())
+}
+
+/** Plusieurs requêtes si besoin (max 1000 bougies par appel Binance). */
+async function fetchBinanceKlinesMinimum(binanceSymbol, interval, minCount) {
+  let merged = []
+  let endTime = undefined
+  while (merged.length < minCount) {
+    const batch = await fetchBinanceKlines(binanceSymbol, interval, BINANCE_KLINE_MAX, endTime)
+    if (batch.length === 0) break
+    merged = mergeCandleArrays(merged, batch)
+    const oldestT = batch[0].date.getTime()
+    endTime = oldestT - 1
+    if (batch.length < BINANCE_KLINE_MAX) break
+  }
+  return merged
+}
+
+async function fetchBinanceKlines(binanceSymbol, interval, limit, endTimeMs) {
   // Binance REST: https://api.binance.com/api/v3/klines
   // Returns: [ [ openTime, open, high, low, close, volume, closeTime, ... ], ... ]
-  const url = `https://api.binance.com/api/v3/klines?symbol=${encodeURIComponent(
+  let url = `https://api.binance.com/api/v3/klines?symbol=${encodeURIComponent(
     binanceSymbol,
   )}&interval=${encodeURIComponent(interval)}&limit=${limit}`
+  if (endTimeMs != null && Number.isFinite(Number(endTimeMs))) {
+    url += `&endTime=${Math.floor(Number(endTimeMs))}`
+  }
 
   const res = await fetch(url)
   if (!res.ok) throw new Error(`Binance HTTP ${res.status}`)
@@ -1384,9 +1413,10 @@ function lastClosedHtfIndex(candles, intervalKey, targetTimeMs) {
 
 async function fetchBacktestMtfCandles(item) {
   const out = { m15: [], h4: [], d1: [] }
+  const twelve15mSize = Math.min(5000, Math.max(BACKTEST_FETCH_LIMIT, BACKTEST_15M_REQUIRED))
   if (item.binanceSymbol) {
     const [m15, h4, d1] = await Promise.all([
-      fetchBinanceKlines(item.binanceSymbol, '15m', BACKTEST_FETCH_LIMIT),
+      fetchBinanceKlinesMinimum(item.binanceSymbol, '15m', BACKTEST_15M_REQUIRED),
       fetchBinanceKlines(item.binanceSymbol, '4h', BACKTEST_FETCH_LIMIT),
       fetchBinanceKlines(item.binanceSymbol, '1d', BACKTEST_FETCH_LIMIT),
     ])
@@ -1397,7 +1427,7 @@ async function fetchBacktestMtfCandles(item) {
   }
   if (item.twelveSymbol && TWELVE_DATA_KEY) {
     const [m15, h4, d1] = await Promise.all([
-      fetchTwelveDataCandles(item.twelveSymbol, '15min', BACKTEST_FETCH_LIMIT, TWELVE_DATA_KEY),
+      fetchTwelveDataCandles(item.twelveSymbol, '15min', twelve15mSize, TWELVE_DATA_KEY),
       fetchTwelveDataCandles(item.twelveSymbol, '4h', BACKTEST_FETCH_LIMIT, TWELVE_DATA_KEY),
       fetchTwelveDataCandles(item.twelveSymbol, '1day', BACKTEST_FETCH_LIMIT, TWELVE_DATA_KEY),
     ])
@@ -1489,9 +1519,8 @@ function simulateExitFromBar(direction, entry, sl, tp, candles, fromIdx) {
 }
 
 function runBacktestOnCandles(m15, h4, d1) {
-  const minWarmup = 80
-  if (m15.length < minWarmup + BACKTEST_BARS) {
-    throw new Error(`Pas assez de bougies 15m (reçu ${m15.length}, besoin ~${minWarmup + BACKTEST_BARS})`)
+  if (m15.length < BACKTEST_15M_REQUIRED) {
+    throw new Error(`Pas assez de bougies 15m (reçu ${m15.length}, besoin ~${BACKTEST_15M_REQUIRED})`)
   }
 
   const h4Key = intervalKeyFromMtf('4H')
@@ -1502,12 +1531,14 @@ function runBacktestOnCandles(m15, h4, d1) {
   const endIdx = m15.length - 1
   const periodStart = m15[startIdx].date
   const periodEnd = m15[endIdx].date
+  const periodDaysCovered =
+    (periodEnd.getTime() - periodStart.getTime()) / (24 * 60 * 60 * 1000)
 
   const trades = []
   let openUntil = -1
 
   for (let i = startIdx; i <= endIdx; i++) {
-    if (i < minWarmup) continue
+    if (i < BACKTEST_WARMUP_BARS) continue
     if (i <= openUntil) continue
 
     const tClose = m15[i].date.getTime() + m15Ms
@@ -1605,6 +1636,9 @@ function runBacktestOnCandles(m15, h4, d1) {
       avgLoss,
       profitFactor,
       totalGainPct,
+      candlesAnalyzed: BACKTEST_BARS,
+      periodDaysCovered,
+      lowTradeSample: total < 30,
     },
     equityCurve: curve,
   }
@@ -1727,7 +1761,7 @@ function BacktestPanel({ open, onClose, item, loading, error, data, onExportCsv 
       <div className="backtest-modal" onClick={(e) => e.stopPropagation()}>
         <div className="backtest-modal-head">
           <h2 id="backtest-title" className="backtest-title syne">
-            📊 Backtest {item.label} - {BACKTEST_BARS} bougies 15m
+            📊 Backtest {item.label} — {BACKTEST_BARS} bougies 15m (~10 j)
           </h2>
           <button type="button" className="backtest-close" onClick={onClose} aria-label="Fermer">
             ✕
@@ -1744,6 +1778,13 @@ function BacktestPanel({ open, onClose, item, loading, error, data, onExportCsv 
                 <div>
                   ⏱ Période : du {fmtDate(data.periodStart)} au {fmtDate(data.periodEnd)}
                 </div>
+                <div>📏 Bougies analysées : {s.candlesAnalyzed ?? BACKTEST_BARS}</div>
+                <div>
+                  📅 Période couverte :{' '}
+                  {Number.isFinite(s.periodDaysCovered)
+                    ? `${s.periodDaysCovered.toFixed(1)} jours`
+                    : '—'}
+                </div>
                 <div className="backtest-sep">─────────────────────────────</div>
                 <div>📈 Trades totaux : {total}</div>
                 <div>
@@ -1759,6 +1800,12 @@ function BacktestPanel({ open, onClose, item, loading, error, data, onExportCsv 
                 <div>📈 Win Rate : {s.winRatePct.toFixed(1)}%</div>
                 <div>💵 Gain total simulé : {fmtPct(s.totalGainPct)}</div>
                 <div className="backtest-sep">─────────────────────────────</div>
+                {s.lowTradeSample && (
+                  <div className="backtest-low-sample">
+                    Attention : backtest sur données limitées, résultats non représentatifs sur moins de 30
+                    trades
+                  </div>
+                )}
                 <div className="backtest-disclaimer">
                   ⚠️ &quot;Résultats passés ne garantissent pas les résultats futurs&quot;
                 </div>
@@ -3294,7 +3341,7 @@ export default function App() {
             type="button"
             className="backtest-header-btn desktop-only"
             onClick={() => setBacktestOpen(true)}
-            title="Backtest : 200 bougies 15m, score confluence comme le scanner"
+            title="Backtest : 1000 bougies 15m (~10 j), score confluence comme le scanner"
           >
             📊 Backtest
           </button>
@@ -3309,7 +3356,7 @@ export default function App() {
         type="button"
         className="backtest-fab"
         onClick={() => setBacktestOpen(true)}
-        title="Backtest : 200 bougies 15m"
+        title="Backtest : 1000 bougies 15m (~10 j)"
         aria-label="Ouvrir le backtest"
       >
         📊 Backtest

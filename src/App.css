@@ -1521,6 +1521,17 @@ body:has(.scanner-app) {
   user-select: none;
 }
 
+.backtest-low-sample {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  background: rgba(251, 191, 36, 0.1);
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(254, 240, 200, 0.95);
+}
+
 .backtest-disclaimer {
   font-size: 12px;
   color: rgba(251, 191, 36, 0.85);
